@@ -1,0 +1,105 @@
+Jewellery Management Software (Python-Based)
+1. Introduction
+The objective of this project is to develop a comprehensive Jewellery Management Software using
+Python that simplifies and automates daily operations of jewellery businesses.
+The system will support inventory management, billing, staff control, analytics, and licensing within
+a secure, role-based environment.
+This software is designed for multi-client usage with a central Master Admin.
+
+2. Core Features & Functional Requirements
+2.1 Role-Based Management System:
+• Secure role-based access system
+• Roles: Staff, Owner/Admin, Master Admin
+• Login authentication system
+
+2.2 Staff Panel:
+• Perform sales operations
+• Create estimate bills
+• Restricted from inventory, reports, and settings
+
+2.3 Owner/Admin Panel:
+• Inventory management (Add/Edit/Delete items)
+• Staff management
+• Sales reports: daily, weekly, monthly
+• Export reports in Excel format
+
+2.4 Master Admin Panel:
+• Manage jeweller clients
+• Generate license keys
+• Monitor usage and sales data
+
+2.5 Licensing System:
+• License key validation
+• Expiry or lifetime license options
+
+2.6 Initial Setup Page:
+• Enter business details (Shop name, owner, contact, GST optional)
+• Enter license key
+• Details used across bills and reports
+
+2.7 Billing System:
+• Generate estimate and final bills
+• Include customer and product details
+
+2.8 Data Export:
+• Export reports in Excel format
+• Daily, weekly, monthly data
+
+3. Technical Requirements
+• Backend: Python (Django / Flask)
+• Frontend: HTML, CSS, JavaScript
+• Database: MySQL / PostgreSQL / SQLite
+Deployment: Desktop or Web-based
+Security: Role-based authentication and encryption
+
+4. Additional Requirements
+• User-friendly interface
+• Fast billing system
+• Scalable for multiple jewellers
+• Backup and restore functionality
+
+5. Expected Outcome
+A complete jewellery business management solution that automates operations, provides insights,
+secures access, and enables centralized control.
+
+jewellery-desktop-app/
+│
+├── main.py                  # Entry point
+│
+├── ui/                      # All UI screens
+│   ├── dashboard.py
+│   ├── billing.py
+│   ├── inventory.py
+│   ├── reports.py
+│   └── login.py
+│
+├── components/              # Reusable UI components
+│   ├── sidebar.py
+│   ├── navbar.py
+│   └── table.py
+│
+├── services/                # Logic layer (no UI)
+│   ├── serial_service.py    # Weight machine
+│   ├── billing_service.py
+│   ├── inventory_service.py
+│   └── auth_service.py
+│
+├── models/                  # Data structure (optional now)
+│   ├── product.py
+│   ├── bill.py
+│   └── user.py
+│
+├── utils/                   # Helper functions
+│   ├── constants.py
+│   ├── helpers.py
+│   └── validators.py
+│
+├── assets/                  # Static files
+│   ├── icons/
+│   ├── images/
+│   └── styles.qss          # UI styling (important 🔥)
+│
+├── config/                  # Config files
+│   └── settings.py
+│
+└── requirements.txt
