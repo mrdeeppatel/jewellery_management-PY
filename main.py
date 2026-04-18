@@ -3,6 +3,7 @@ from components.sidebar import Sidebar
 from ui.dashboard import Dashboard
 from ui.billing import Billing
 from ui.live_billing import LiveBillingPage
+from ui.item_billing import ItemBillingPage
 from ui.inventory import Inventory
 from ui.reports import Reports
 from ui.all_bills import AllBills
@@ -57,6 +58,7 @@ class MainWindow(QMainWindow):
             "dashboard": Dashboard(),
             "billing": Billing(),
             "live billing": LiveBillingPage(),
+            "item billing": ItemBillingPage(),
             "inventory": Inventory(),
             "all bills": AllBills(),
             "reports": Reports()
