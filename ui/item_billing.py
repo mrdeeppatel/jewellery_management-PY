@@ -415,73 +415,45 @@ class ItemBillingPage(QWidget):
                    grand_total, discount, final_amount):
         doc = SimpleDocTemplate(
             file_path, pagesize=A4,
-            topMargin=20*mm, bottomMargin=15*mm,
+            topMargin=15*mm, bottomMargin=15*mm,
             leftMargin=15*mm, rightMargin=15*mm
         )
         elements = []
         styles = getSampleStyleSheet()
+        black = colors.black
 
-        # Custom styles
         title_style = ParagraphStyle(
             'BillTitle', parent=styles['Title'],
-            fontSize=22, leading=26, alignment=TA_CENTER,
-            textColor=colors.HexColor('#212529'), spaceAfter=4
-        )
-        subtitle_style = ParagraphStyle(
-            'BillSubtitle', parent=styles['Normal'],
-            fontSize=10, alignment=TA_CENTER,
-            textColor=colors.HexColor('#6C757D'), spaceAfter=12
-        )
-        heading_style = ParagraphStyle(
-            'SectionHead', parent=styles['Normal'],
-            fontSize=12, leading=16, textColor=colors.HexColor('#495057'),
-            spaceBefore=10, spaceAfter=6, fontName='Helvetica-Bold'
-        )
-        normal_style = ParagraphStyle(
-            'BillNormal', parent=styles['Normal'],
-            fontSize=10, leading=14, textColor=colors.HexColor('#343A40')
-        )
-        amount_style = ParagraphStyle(
-            'AmountStyle', parent=styles['Normal'],
-            fontSize=16, leading=20, alignment=TA_RIGHT,
-            textColor=colors.HexColor('#2B8A3E'), fontName='Helvetica-Bold',
-            spaceBefore=8
+            fontSize=18, leading=22, alignment=TA_CENTER,
+            textColor=black, fontName='Helvetica-Bold', spaceAfter=2
         )
 
-        # ── Header ──
-        elements.append(Paragraph("✦ ITEM BILL ✦", title_style))
-        elements.append(Paragraph("Item-wise Billing Invoice", subtitle_style))
-        elements.append(Spacer(1, 4*mm))
-
-        # ── Bill Info ──
-        info_data = [
-            [Paragraph(f"<b>Voucher:</b> {voucher}", normal_style),
-             Paragraph(f"<b>Date:</b> {date_str}", normal_style)],
-            [Paragraph(f"<b>Party:</b> {party}", normal_style),
-             Paragraph(f"<b>Generated:</b> {datetime.now().strftime('%d-%m-%Y %I:%M %p')}", normal_style)],
-        ]
-        info_table = Table(info_data, colWidths=[doc.width/2]*2)
-        info_table.setStyle(TableStyle([
-            ('VALIGN', (0,0), (-1,-1), 'TOP'),
-            ('BOTTOMPADDING', (0,0), (-1,-1), 6),
-        ]))
-        elements.append(info_table)
+        # ── Title ──
+        elements.append(Paragraph("ITEM BILL", title_style))
         elements.append(Spacer(1, 6*mm))
 
-        # ── Divider ──
-        div_table = Table([[""]], colWidths=[doc.width])
-        div_table.setStyle(TableStyle([
-            ('LINEABOVE', (0,0), (-1,0), 1, colors.HexColor('#DEE2E6')),
-            ('TOPPADDING', (0,0), (-1,-1), 0),
-            ('BOTTOMPADDING', (0,0), (-1,-1), 0),
+        # ── Bill Info as bordered table ──
+        info_data = [
+            ["Voucher", voucher, "Date", date_str],
+            ["Party", party, "Generated", datetime.now().strftime('%d-%m-%Y %I:%M %p')],
+        ]
+        info_table = Table(info_data, colWidths=[doc.width*0.15, doc.width*0.35, doc.width*0.15, doc.width*0.35])
+        info_table.setStyle(TableStyle([
+            ('FONTNAME', (0,0), (0,-1), 'Helvetica-Bold'),
+            ('FONTNAME', (2,0), (2,-1), 'Helvetica-Bold'),
+            ('FONTSIZE', (0,0), (-1,-1), 10),
+            ('TEXTCOLOR', (0,0), (-1,-1), black),
+            ('GRID', (0,0), (-1,-1), 0.75, black),
+            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+            ('TOPPADDING', (0,0), (-1,-1), 6),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+            ('LEFTPADDING', (0,0), (-1,-1), 6),
         ]))
-        elements.append(div_table)
-        elements.append(Spacer(1, 4*mm))
+        elements.append(info_table)
+        elements.append(Spacer(1, 8*mm))
 
         # ── Items Table ──
-        elements.append(Paragraph("Item Details", heading_style))
-
-        header_row = ["#", "Item Name", "Rate (₹)", "Total Pcs", "Amount (₹)"]
+        header_row = ["#", "Item Name", "Rate (Rs.)", "Total Pcs", "Amount (Rs.)"]
         table_data = [header_row]
 
         grand_total_val = 0.0
@@ -499,78 +471,67 @@ class ItemBillingPage(QWidget):
 
             table_data.append([sr, name, rate, pcs, amt])
 
-        # Totals row
         table_data.append(["", "TOTAL", "", str(total_pcs_val), f"{grand_total_val:,.2f}"])
 
-        col_widths = [35, 160, 80, 65, 90]
+        col_widths = [35, 180, 80, 65, 90]
         items_table = Table(table_data, colWidths=col_widths, repeatRows=1)
 
         items_table.setStyle(TableStyle([
-            # Header
-            ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#343A40')),
-            ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+            ('TEXTCOLOR', (0,0), (-1,-1), black),
             ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
             ('FONTSIZE', (0,0), (-1,0), 10),
-            ('BOTTOMPADDING', (0,0), (-1,0), 8),
             ('TOPPADDING', (0,0), (-1,0), 8),
-            # Body
+            ('BOTTOMPADDING', (0,0), (-1,0), 8),
             ('FONTSIZE', (0,1), (-1,-1), 9),
-            ('BOTTOMPADDING', (0,1), (-1,-1), 6),
-            ('TOPPADDING', (0,1), (-1,-1), 6),
+            ('TOPPADDING', (0,1), (-1,-1), 5),
+            ('BOTTOMPADDING', (0,1), (-1,-1), 5),
             ('ALIGN', (0,0), (0,-1), 'CENTER'),
             ('ALIGN', (2,0), (2,-1), 'RIGHT'),
             ('ALIGN', (3,0), (3,-1), 'CENTER'),
             ('ALIGN', (4,0), (4,-1), 'RIGHT'),
-            # Alternating rows
-            ('ROWBACKGROUNDS', (0,1), (-1,-2), [colors.white, colors.HexColor('#F8F9FA')]),
-            # Grid
-            ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#DEE2E6')),
-            # Totals row
-            ('BACKGROUND', (0,-1), (-1,-1), colors.HexColor('#E9ECEF')),
+            ('GRID', (0,0), (-1,-1), 0.75, black),
             ('FONTNAME', (0,-1), (-1,-1), 'Helvetica-Bold'),
-            ('LINEABOVE', (0,-1), (-1,-1), 1.5, colors.HexColor('#343A40')),
         ]))
         elements.append(items_table)
         elements.append(Spacer(1, 8*mm))
 
-        # ── Summary ──
-        elements.append(Paragraph("Bill Summary", heading_style))
-
+        # ── Bill Summary ──
         summary_data = [
+            ["Bill Summary", ""],
             ["Grand Total", grand_total],
-            ["Discount", f"₹ {discount}"],
+            ["Discount", f"Rs. {discount}"],
+            ["Final Amount", final_amount],
         ]
         summary_table = Table(summary_data, colWidths=[doc.width*0.5, doc.width*0.5])
         summary_table.setStyle(TableStyle([
-            ('FONTNAME', (0,0), (0,-1), 'Helvetica-Bold'),
-            ('FONTSIZE', (0,0), (-1,-1), 10),
-            ('ALIGN', (1,0), (1,-1), 'RIGHT'),
-            ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+            ('TEXTCOLOR', (0,0), (-1,-1), black),
+            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0,0), (-1,0), 11),
+            ('SPAN', (0,0), (-1,0)),
+            ('ALIGN', (0,0), (-1,0), 'CENTER'),
+            ('FONTNAME', (0,1), (0,-1), 'Helvetica-Bold'),
+            ('FONTSIZE', (0,1), (-1,-1), 10),
+            ('ALIGN', (1,1), (1,-1), 'RIGHT'),
+            ('GRID', (0,0), (-1,-1), 0.75, black),
             ('TOPPADDING', (0,0), (-1,-1), 6),
-            ('LINEBELOW', (0,0), (-1,-2), 0.5, colors.HexColor('#E9ECEF')),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+            ('LEFTPADDING', (0,0), (-1,-1), 6),
+            ('FONTNAME', (0,-1), (-1,-1), 'Helvetica-Bold'),
+            ('FONTSIZE', (0,-1), (-1,-1), 11),
         ]))
         elements.append(summary_table)
-        elements.append(Spacer(1, 4*mm))
+        elements.append(Spacer(1, 10*mm))
 
-        # ── Final Amount ──
-        amount_div = Table([[""]], colWidths=[doc.width])
-        amount_div.setStyle(TableStyle([
-            ('LINEABOVE', (0,0), (-1,0), 2, colors.HexColor('#2B8A3E')),
-            ('TOPPADDING', (0,0), (-1,-1), 0),
-            ('BOTTOMPADDING', (0,0), (-1,-1), 0),
-        ]))
-        elements.append(amount_div)
-        elements.append(Paragraph(f"Final Amount: {final_amount}", amount_style))
-        elements.append(Spacer(1, 12*mm))
-
-        # ── Footer ──
-        footer_style = ParagraphStyle(
-            'Footer', parent=styles['Normal'],
+        # ── Generated timestamp ──
+        ts_style = ParagraphStyle(
+            'Timestamp', parent=styles['Normal'],
             fontSize=8, alignment=TA_CENTER,
-            textColor=colors.HexColor('#ADB5BD'), spaceBefore=15
+            textColor=black, spaceBefore=10
         )
-        elements.append(Paragraph("— Thank you for your business —", footer_style))
-        elements.append(Paragraph("This is a computer-generated bill.", footer_style))
+        elements.append(Paragraph(
+            f"Generated on: {datetime.now().strftime('%d-%m-%Y %I:%M:%S %p')}",
+            ts_style
+        ))
 
         doc.build(elements)
 
