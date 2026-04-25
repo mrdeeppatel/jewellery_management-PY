@@ -5,10 +5,11 @@ from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
     QTableWidget, QTableWidgetItem, QHeaderView, QFrame, QDateEdit,
     QApplication, QGraphicsDropShadowEffect, QSizePolicy, QAbstractItemView,
-    QFileDialog, QMessageBox
+    QFileDialog, QMessageBox, QScrollArea
 )
-from PyQt5.QtCore import Qt, QDate
+from PyQt5.QtCore import Qt, QDate, QTimer
 from PyQt5.QtGui import QFont, QColor
+from models.database import get_db, Item
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
 from reportlab.lib.units import mm
@@ -16,9 +17,11 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, 
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
 
+
 class LiveBillingPage(QWidget):
     def __init__(self):
         super().__init__()
+        self._prev_code_len = 0   # track field length to detect erase
         self.init_ui()
         self.setup_connections()
 
@@ -179,9 +182,17 @@ class LiveBillingPage(QWidget):
         left_layout.addLayout(table_controls_layout)
 
         # 4. Quick Entry Row
+        qe_header_layout = QHBoxLayout()
         qe_title = QLabel("Quick Entry:")
         qe_title.setStyleSheet("font-weight: bold; font-size: 16px; color: #495057;")
-        left_layout.addWidget(qe_title)
+        qe_header_layout.addWidget(qe_title)
+        
+        self.lbl_qe_selected_item = QLabel("")
+        self.lbl_qe_selected_item.setStyleSheet("font-weight: bold; font-size: 14px; color: #2B8A3E;")
+        qe_header_layout.addWidget(self.lbl_qe_selected_item)
+        qe_header_layout.addStretch()
+        
+        left_layout.addLayout(qe_header_layout)
         
         quick_entry_layout = QHBoxLayout()
         quick_entry_layout.setSpacing(10)
@@ -196,8 +207,8 @@ class LiveBillingPage(QWidget):
             return vbox
         
         self.qe_item_code = QLineEdit()
-        self.qe_item_code.setPlaceholderText("Item Code")
-        
+        self.qe_item_code.setPlaceholderText("🔍  Item Code / Name")
+
         self.qe_net_weight = QLineEdit()
         self.qe_net_weight.setPlaceholderText("Net Wt")
         
@@ -213,7 +224,7 @@ class LiveBillingPage(QWidget):
         self.qe_fine.setStyleSheet("background-color: #E9ECEF; color: #495057; font-weight: bold;")
         
         self.btn_add = QPushButton("Add Item")
-        
+
         quick_entry_layout.addLayout(create_qe_vbox("Item Code", self.qe_item_code))
         quick_entry_layout.addLayout(create_qe_vbox("Net Wt", self.qe_net_weight))
         quick_entry_layout.addLayout(create_qe_vbox("Touch %", self.qe_touch))
@@ -227,6 +238,59 @@ class LiveBillingPage(QWidget):
         btn_vbox.addWidget(self.btn_add)
         quick_entry_layout.addLayout(btn_vbox)
         left_layout.addLayout(quick_entry_layout)
+
+        # ── Live Autocomplete Dropdown (floats above the input) ──────────────
+        # Parent is self (the top-level widget) so it can overlap everything.
+        self.suggestion_frame = QFrame(self)
+        self.suggestion_frame.setObjectName("suggestionFrame")
+        self.suggestion_frame.setStyleSheet("""
+            QFrame#suggestionFrame {
+                background-color: #ffffff;
+                border: 1.5px solid #4DABF7;
+                border-radius: 8px;
+            }
+        """)
+        sug_layout = QVBoxLayout(self.suggestion_frame)
+        sug_layout.setContentsMargins(0, 0, 0, 0)
+        sug_layout.setSpacing(0)
+
+        # Header row: title + close button
+        sug_header = QWidget()
+        sug_header.setStyleSheet("background-color: #E7F5FF; border-radius: 8px;")
+        sug_header_layout = QHBoxLayout(sug_header)
+        sug_header_layout.setContentsMargins(10, 4, 6, 4)
+        sug_lbl = QLabel("Matching Items")
+        sug_lbl.setStyleSheet("font-size: 12px; font-weight: bold; color: #1971C2;")
+        self.btn_close_sug = QPushButton("✕")
+        self.btn_close_sug.setFixedSize(22, 22)
+        self.btn_close_sug.setStyleSheet(
+            "QPushButton { background-color: transparent; color: #868E96; font-size: 13px; font-weight: bold; border: none; border-radius: 4px; }"
+            "QPushButton:hover { background-color: #FA5252; color: white; }"
+        )
+        self.btn_close_sug.setCursor(Qt.PointingHandCursor)
+        sug_header_layout.addWidget(sug_lbl)
+        sug_header_layout.addStretch()
+        sug_header_layout.addWidget(self.btn_close_sug)
+        sug_layout.addWidget(sug_header)
+
+        # Scrollable list of suggestion rows
+        self.sug_scroll = QScrollArea()
+        self.sug_scroll.setWidgetResizable(True)
+        self.sug_scroll.setFrameShape(QFrame.NoFrame)
+        self.sug_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.sug_inner = QWidget()
+        self.sug_inner_layout = QVBoxLayout(self.sug_inner)
+        self.sug_inner_layout.setContentsMargins(0, 0, 0, 0)
+        self.sug_inner_layout.setSpacing(0)
+        self.sug_scroll.setWidget(self.sug_inner)
+        sug_layout.addWidget(self.sug_scroll)
+
+        self.suggestion_frame.hide()
+
+        # Debounce timer
+        self._search_timer = QTimer()
+        self._search_timer.setSingleShot(True)
+        self._search_timer.setInterval(250)
 
         # =========================================================
         # RIGHT SIDE PANEL
@@ -326,6 +390,10 @@ class LiveBillingPage(QWidget):
         self.btn_remove.clicked.connect(self.remove_selected_item)
         self.btn_generate_pdf.clicked.connect(self.generate_pdf)
         
+        # Live autocomplete
+        self.qe_item_code.textChanged.connect(self._on_code_changed)
+        self.btn_close_sug.clicked.connect(self.hide_suggestions)
+
         # Rate calculation
         self.inp_rate_cut.textChanged.connect(self.calculate_totals)
 
@@ -367,13 +435,14 @@ class LiveBillingPage(QWidget):
         if net_wt <= 0:
             return
             
-        tag = self.global_tag_input.text() or "T-001"
+        tag = getattr(self, '_current_selected_tag', None) or self.global_tag_input.text() or "T-001"
+        name = getattr(self, '_current_selected_name', None) or code
             
         row = self.table.rowCount()
         self.table.insertRow(row)
         
         self.table.setItem(row, 0, QTableWidgetItem(tag))
-        self.table.setItem(row, 1, QTableWidgetItem(code))
+        self.table.setItem(row, 1, QTableWidgetItem(name))
         self.table.setItem(row, 2, QTableWidgetItem(f"{net_wt:.3f}"))
         self.table.setItem(row, 3, QTableWidgetItem(f"{touch:.2f}"))
         self.table.setItem(row, 4, QTableWidgetItem(f"{wastage:.2f}"))
@@ -386,6 +455,10 @@ class LiveBillingPage(QWidget):
         self.qe_fine.clear()
         self.qe_touch.setText(self.global_touch_input.text())
         self.qe_wastage.setText(self.global_wastage_input.text())
+        if hasattr(self, 'lbl_qe_selected_item'):
+            self.lbl_qe_selected_item.clear()
+        self._current_selected_tag = None
+        self._current_selected_name = None
         
         self.calculate_totals()
 
@@ -394,6 +467,151 @@ class LiveBillingPage(QWidget):
         if current_row >= 0:
             self.table.removeRow(current_row)
             self.calculate_totals()
+
+    # ── Live autocomplete helpers ─────────────────────────────────────────
+    def _on_code_changed(self, text):
+        new_len = len(text)
+        erasing = new_len < self._prev_code_len   # user deleted characters
+        self._prev_code_len = new_len
+
+        # Clear selected item info if user manually edits
+        if hasattr(self, 'lbl_qe_selected_item'):
+            self.lbl_qe_selected_item.clear()
+        self._current_selected_tag = None
+        self._current_selected_name = None
+
+        # Always hide & stop when field is empty or user is erasing
+        if not text.strip() or erasing:
+            self._search_timer.stop()
+            self.hide_suggestions()
+            return
+
+        self._search_timer.stop()
+        self._search_timer.timeout.disconnect() if self._search_timer.receivers(self._search_timer.timeout) else None
+        self._search_timer.timeout.connect(lambda: self._do_live_search(text.strip()))
+        self._search_timer.start()
+
+    def _do_live_search(self, query):
+        try:
+            db = next(get_db())
+            results = db.query(Item).filter(
+                (Item.item_code.ilike(f"%{query}%")) |
+                (Item.item_name.ilike(f"%{query}%")) |
+                (Item.tag_no.ilike(f"%{query}%")) |
+                (Item.design.ilike(f"%{query}%"))
+            ).limit(10).all()
+            db.close()
+        except Exception:
+            self.hide_suggestions()
+            return
+
+        if not results:
+            self.hide_suggestions()
+            return
+
+        if len(results) == 1:
+            # Single match — auto-fill (only reached when typing forward)
+            self.hide_suggestions()
+            self._apply_item(results[0])
+            return
+
+        self._populate_suggestions(results)
+
+    def _populate_suggestions(self, items):
+        # Clear old rows
+        while self.sug_inner_layout.count():
+            child = self.sug_inner_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+
+        for item in items:
+            code = item.item_code or "-"
+            tag = item.tag_no or "N/A"
+            net = f"{item.net_wt} g" if item.net_wt else "-"
+            touch = f"{item.touch}%" if item.touch else "-"
+            design = f" | {item.design}" if item.design else ""
+            label_text = f"<b>{code}</b>  {item.item_name}{design}   <span style='color:#868E96'>Tag: <b style='color:#495057'>{tag}</b> | Net: {net} | Touch: {touch}</span>"
+
+            row_btn = QPushButton()
+            row_btn.setText("")
+            row_btn.setFlat(True)
+            row_btn.setCursor(Qt.PointingHandCursor)
+            row_btn.setStyleSheet("""
+                QPushButton {
+                    text-align: left;
+                    padding: 8px 12px;
+                    border: none;
+                    border-bottom: 1px solid #F1F3F5;
+                    background-color: white;
+                    font-size: 13px;
+                }
+                QPushButton:hover { background-color: #E7F5FF; }
+            """)
+
+            # Use a label inside the button for rich text
+            btn_layout = QHBoxLayout(row_btn)
+            btn_layout.setContentsMargins(8, 4, 8, 4)
+            lbl = QLabel(label_text)
+            lbl.setTextFormat(Qt.RichText)
+            lbl.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+            btn_layout.addWidget(lbl)
+
+            # Capture item in closure
+            def make_slot(it):
+                return lambda: self._select_suggestion(it)
+
+            row_btn.clicked.connect(make_slot(item))
+            self.sug_inner_layout.addWidget(row_btn)
+
+        self.sug_inner_layout.addStretch()
+        self._position_suggestion_frame()
+        self.suggestion_frame.show()
+        self.suggestion_frame.raise_()
+
+    def _select_suggestion(self, item):
+        self.hide_suggestions()
+        self._apply_item(item)
+
+    def _apply_item(self, item):
+        # Block textChanged so we don't re-trigger search
+        self.qe_item_code.blockSignals(True)
+        self.qe_item_code.setText(item.item_code or item.item_name)
+        self.qe_item_code.blockSignals(False)
+
+        tag = item.tag_no or "N/A"
+        name = item.item_name or "Unknown"
+        if hasattr(self, 'lbl_qe_selected_item'):
+            self.lbl_qe_selected_item.setText(f"✓ Selected: {name} | Tag: {tag}")
+        self._current_selected_tag = item.tag_no
+        self._current_selected_name = item.item_name
+
+        if item.net_wt:
+            self.qe_net_weight.setText(str(item.net_wt))
+        if item.touch:
+            self.qe_touch.setText(str(item.touch))
+        self.calculate_current_fine()
+
+    def hide_suggestions(self):
+        self.suggestion_frame.hide()
+
+    def _position_suggestion_frame(self):
+        """Position the dropdown frame above the qe_item_code input."""
+        input_global = self.qe_item_code.mapTo(self, self.qe_item_code.rect().topLeft())
+        frame_h = min(220, 40 + self.sug_inner_layout.count() * 42)
+        frame_w = max(self.qe_item_code.width() * 3, 480)
+        x = input_global.x()
+        y = input_global.y() - frame_h - 4
+        # Keep inside widget
+        if y < 0:
+            y = input_global.y() + self.qe_item_code.height() + 4
+        if x + frame_w > self.width():
+            x = self.width() - frame_w - 4
+        self.suggestion_frame.setGeometry(x, y, frame_w, frame_h)
+
+    def resizeEvent(self, event):
+        if not self.suggestion_frame.isHidden():
+            self._position_suggestion_frame()
+        super().resizeEvent(event)
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Delete and self.table.hasFocus():
@@ -451,12 +669,65 @@ class LiveBillingPage(QWidget):
             return
 
         try:
+            self._save_bill_to_db(voucher, party, total_fine, fine_9950, rate_cut, amount)
             self._build_pdf(file_path, voucher, date_str, party,
                             total_fine, fine_9950, rate_cut, amount)
-            QMessageBox.information(self, "Success", f"Bill saved successfully!\n{file_path}")
+            QMessageBox.information(self, "Success", f"Bill saved to DB and PDF generated successfully!\n{file_path}")
             os.startfile(file_path)  # Open the PDF on Windows
+            
+            # Optionally reset UI after bill is completed
+            self.table.setRowCount(0)
+            self.calculate_totals()
+            self.voucher_input.clear()
+            self.party_input.clear()
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to generate PDF.\n{str(e)}")
+            QMessageBox.critical(self, "Error", f"Failed to save/generate bill.\n{str(e)}")
+
+    def _save_bill_to_db(self, voucher, party, total_fine_str, fine_9950_str, rate_cut_str, amount_str):
+        from models.database import Bill, BillItem
+        db = next(get_db())
+        try:
+            total_fine = self.get_float(total_fine_str.replace(" g", ""))
+            fine_9950 = self.get_float(fine_9950_str.replace(" g", ""))
+            rate_cut = self.get_float(rate_cut_str)
+            amount = self.get_float(amount_str.replace("₹", "").replace(",", "").strip())
+
+            new_bill = Bill(
+                voucher=voucher if voucher != "N/A" else None,
+                customer_name=party,
+                total_amount=amount,
+                total_fine=total_fine,
+                fine_9950=fine_9950,
+                rate_cut=rate_cut,
+                is_estimate=False
+            )
+            db.add(new_bill)
+            db.commit()
+
+            for row in range(self.table.rowCount()):
+                tag = self.table.item(row, 0).text() if self.table.item(row, 0) else ""
+                name = self.table.item(row, 1).text() if self.table.item(row, 1) else ""
+                net_wt = self.get_float(self.table.item(row, 2).text() if self.table.item(row, 2) else "0")
+                touch = self.get_float(self.table.item(row, 3).text() if self.table.item(row, 3) else "0")
+                wastage = self.get_float(self.table.item(row, 4).text() if self.table.item(row, 4) else "0")
+                fine = self.get_float(self.table.item(row, 5).text() if self.table.item(row, 5) else "0")
+
+                b_item = BillItem(
+                    bill_id=new_bill.id,
+                    price=0.0,
+                    tag=tag,
+                    name=name,
+                    net_wt=net_wt,
+                    touch=touch,
+                    wastage=wastage,
+                    fine=fine
+                )
+                db.add(b_item)
+            
+            db.commit()
+        except Exception as e:
+            db.rollback()
+            raise e
 
     def _build_pdf(self, file_path, voucher, date_str, party,
                    total_fine, fine_9950, rate_cut, amount):

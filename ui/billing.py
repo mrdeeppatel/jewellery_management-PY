@@ -37,7 +37,7 @@ class Billing(QWidget):
         
         db = next(get_db())
         items = db.query(Item).all()
-        item_names = [i.name for i in items]
+        item_names = [f"{i.item_code or ''} - {i.item_name}" for i in items]
         if not item_names:
             item_names = ["No items in inventory"]
         self.product.addItems(item_names)
@@ -187,11 +187,10 @@ class Billing(QWidget):
             db.commit()
 
             for item in self.items:
-                db_item = db.query(Item).filter_by(name=item["name"]).first()
+                # item["name"] is stored as "CODE - item_name"
+                item_name_part = item["name"].split(" - ", 1)[-1]
+                db_item = db.query(Item).filter_by(item_name=item_name_part).first()
                 if db_item:
-                    # Deduct stock quantity
-                    if db_item.stock_quantity > 0:
-                        db_item.stock_quantity -= 1
                     b_item = BillItem(bill_id=new_bill.id, item_id=db_item.id, quantity=1, price=item["total"])
                     db.add(b_item)
                     

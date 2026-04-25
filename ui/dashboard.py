@@ -27,10 +27,8 @@ class DataLoaderThread(QThread):
             if not activity_items:
                 activity_items = ["No recent activity"]
 
-            low_stock = db.query(Item).filter(Item.stock_quantity < 5).all()
-            alert_items = [f"{i.name} low stock ({i.stock_quantity})" for i in low_stock]
-            if not alert_items:
-                alert_items = ["All stock levels OK"]
+            low_stock = []  # stock_quantity no longer tracked in new schema
+            alert_items = ["Stock alerts not available (no stock_quantity field)"]
 
             db.close()
             

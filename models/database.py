@@ -17,20 +17,32 @@ class User(Base):
 class Item(Base):
     __tablename__ = 'inventory'
     id = Column(Integer, primary_key=True)
-    name = Column(String, nullable=False)
-    category = Column(String)
-    weight = Column(Float)
-    stock_quantity = Column(Integer, default=0)
+    tag_no = Column(String, nullable=True)       # Tag No (barcode)
+    item_code = Column(String, nullable=True)    # It Code
+    item_name = Column(String, nullable=False)   # It Name
+    pcs = Column(Float, nullable=True)           # Pcs
+    size = Column(String, nullable=True)         # Size
+    design = Column(String, nullable=True)       # Design
+    gr_wt = Column(Float, nullable=True)         # GrWt
+    net_wt = Column(Float, nullable=True)        # NtWt
+    ghat_wt = Column(Float, nullable=True)       # GhatWt
+    touch = Column(Float, nullable=True)         # Touch
+    wst_percent = Column(Float, nullable=True)   # Wst%
+    mrp = Column(Float, nullable=True)           # MRP
 
 # 2.7 Billing System (Estimates & Final Bills)
 class Bill(Base):
     __tablename__ = 'bills'
     id = Column(Integer, primary_key=True)
+    voucher = Column(String, nullable=True)
     customer_name = Column(String, nullable=False)
     customer_phone = Column(String)
     date = Column(DateTime, default=datetime.utcnow)
     is_estimate = Column(Boolean, default=True)
     total_amount = Column(Float, default=0.0)
+    total_fine = Column(Float, nullable=True)
+    fine_9950 = Column(Float, nullable=True)
+    rate_cut = Column(Float, nullable=True)
     
     # 2.2 Staff Panel (Tracking who made the sale)
     created_by_id = Column(Integer, ForeignKey('users.id'))
@@ -41,9 +53,16 @@ class BillItem(Base):
     __tablename__ = 'bill_items'
     id = Column(Integer, primary_key=True)
     bill_id = Column(Integer, ForeignKey('bills.id'))
-    item_id = Column(Integer, ForeignKey('inventory.id'))
+    item_id = Column(Integer, ForeignKey('inventory.id'), nullable=True)
     quantity = Column(Integer, default=1)
     price = Column(Float, nullable=False)
+    
+    tag = Column(String, nullable=True)
+    name = Column(String, nullable=True)
+    net_wt = Column(Float, nullable=True)
+    touch = Column(Float, nullable=True)
+    wastage = Column(Float, nullable=True)
+    fine = Column(Float, nullable=True)
     
     bill = relationship("Bill", back_populates="items")
     item = relationship("Item")

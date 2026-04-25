@@ -1,6 +1,6 @@
 from PyQt5.QtWidgets import *
-from PyQt5.QtGui import QColor, QFont
-from PyQt5.QtCore import Qt, QThread, pyqtSignal
+from PyQt5.QtGui import QColor, QFont, QIcon
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
 import sys
 from models.database import get_db, Item
 
@@ -16,10 +16,14 @@ class InventoryLoaderThread(QThread):
             for item in items:
                 result.append({
                     "id": item.id,
-                    "name": item.name,
-                    "category": item.category,
-                    "weight": item.weight,
-                    "stock_quantity": item.stock_quantity
+                    "tag_no": item.tag_no or "",
+                    "item_code": item.item_code or "",
+                    "item_name": item.item_name,
+                    "design": item.design or "",
+                    "gr_wt": item.gr_wt,
+                    "net_wt": item.net_wt,
+                    "touch": item.touch,
+                    "mrp": item.mrp,
                 })
             db.close()
             self.data_loaded.emit(result)
@@ -31,32 +35,52 @@ class ItemDialog(QDialog):
     def __init__(self, item=None):
         super().__init__()
         self.setWindowTitle("Add Item" if not item else "Edit Item")
-        self.setFixedSize(300, 300)
+        self.setFixedSize(340, 420)
         self.layout = QVBoxLayout()
 
+        self.code_input = QLineEdit()
+        self.code_input.setPlaceholderText("Item Code (e.g. KD76)")
+        self.tag_input = QLineEdit()
+        self.tag_input.setPlaceholderText("Tag No")
         self.name_input = QLineEdit()
-        self.name_input.setPlaceholderText("Name")
-        self.cat_input = QLineEdit()
-        self.cat_input.setPlaceholderText("Category")
-        self.weight_input = QLineEdit()
-        self.weight_input.setPlaceholderText("Weight (g)")
-        self.stock_input = QLineEdit()
-        self.stock_input.setPlaceholderText("Stock Qty")
+        self.name_input.setPlaceholderText("Item Name")
+        self.design_input = QLineEdit()
+        self.design_input.setPlaceholderText("Design")
+        self.gr_wt_input = QLineEdit()
+        self.gr_wt_input.setPlaceholderText("Gross Weight (g)")
+        self.net_wt_input = QLineEdit()
+        self.net_wt_input.setPlaceholderText("Net Weight (g)")
+        self.touch_input = QLineEdit()
+        self.touch_input.setPlaceholderText("Touch %")
+        self.mrp_input = QLineEdit()
+        self.mrp_input.setPlaceholderText("MRP")
 
         if item:
-            self.name_input.setText(item.name)
-            self.cat_input.setText(item.category or "")
-            self.weight_input.setText(str(item.weight) if item.weight else "")
-            self.stock_input.setText(str(item.stock_quantity))
+            self.code_input.setText(item.item_code or "")
+            self.tag_input.setText(item.tag_no or "")
+            self.name_input.setText(item.item_name)
+            self.design_input.setText(item.design or "")
+            self.gr_wt_input.setText(str(item.gr_wt) if item.gr_wt else "")
+            self.net_wt_input.setText(str(item.net_wt) if item.net_wt else "")
+            self.touch_input.setText(str(item.touch) if item.touch else "")
+            self.mrp_input.setText(str(item.mrp) if item.mrp else "")
 
+        self.layout.addWidget(QLabel("Item Code"))
+        self.layout.addWidget(self.code_input)
+        self.layout.addWidget(QLabel("Tag No"))
+        self.layout.addWidget(self.tag_input)
         self.layout.addWidget(QLabel("Item Name"))
         self.layout.addWidget(self.name_input)
-        self.layout.addWidget(QLabel("Category"))
-        self.layout.addWidget(self.cat_input)
-        self.layout.addWidget(QLabel("Weight (g)"))
-        self.layout.addWidget(self.weight_input)
-        self.layout.addWidget(QLabel("Stock Quantity"))
-        self.layout.addWidget(self.stock_input)
+        self.layout.addWidget(QLabel("Design"))
+        self.layout.addWidget(self.design_input)
+        self.layout.addWidget(QLabel("Gross Weight (g)"))
+        self.layout.addWidget(self.gr_wt_input)
+        self.layout.addWidget(QLabel("Net Weight (g)"))
+        self.layout.addWidget(self.net_wt_input)
+        self.layout.addWidget(QLabel("Touch %"))
+        self.layout.addWidget(self.touch_input)
+        self.layout.addWidget(QLabel("MRP"))
+        self.layout.addWidget(self.mrp_input)
 
         self.save_btn = QPushButton("Save")
         self.save_btn.clicked.connect(self.accept)
@@ -65,10 +89,14 @@ class ItemDialog(QDialog):
 
     def get_data(self):
         return {
-            "name": self.name_input.text().strip(),
-            "category": self.cat_input.text().strip(),
-            "weight": float(self.weight_input.text() or 0),
-            "stock_quantity": int(self.stock_input.text() or 0)
+            "item_code": self.code_input.text().strip() or None,
+            "tag_no": self.tag_input.text().strip() or None,
+            "item_name": self.name_input.text().strip(),
+            "design": self.design_input.text().strip() or None,
+            "gr_wt": float(self.gr_wt_input.text() or 0) or None,
+            "net_wt": float(self.net_wt_input.text() or 0) or None,
+            "touch": float(self.touch_input.text() or 0) or None,
+            "mrp": float(self.mrp_input.text() or 0) or None,
         }
 
 class Inventory(QWidget):
@@ -77,6 +105,9 @@ class Inventory(QWidget):
 
         self.setWindowTitle("Inventory Dashboard")
         self.resize(900, 550)
+
+        # Store all items for search filtering
+        self.all_items = []
 
         # 🔥 Main Layout
         main_layout = QVBoxLayout()
@@ -106,6 +137,34 @@ class Inventory(QWidget):
         header_layout.addStretch()
         header_layout.addWidget(self.refresh_btn)
 
+        # 🔍 Search Bar
+        search_layout = QHBoxLayout()
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("🔍  Search by Item Code, Name, or Category...")
+        self.search_input.setClearButtonEnabled(True)
+        self.search_input.setStyleSheet("""
+            QLineEdit {
+                border: 2px solid #e0e0e0;
+                border-radius: 10px;
+                padding: 10px 15px;
+                font-size: 16px;
+                background-color: #f8f9fa;
+                color: #333;
+            }
+            QLineEdit:focus {
+                border: 2px solid #0d6efd;
+                background-color: #ffffff;
+            }
+        """)
+        # Debounce search: filter after user stops typing for 300ms
+        self.search_timer = QTimer()
+        self.search_timer.setSingleShot(True)
+        self.search_timer.setInterval(300)
+        self.search_timer.timeout.connect(self.filter_items)
+        self.search_input.textChanged.connect(lambda: self.search_timer.start())
+
+        search_layout.addWidget(self.search_input)
+
         # 🔥 Buttons
         btn_layout = QHBoxLayout()
         self.add_btn = QPushButton("Add Item")
@@ -126,11 +185,11 @@ class Inventory(QWidget):
 
         # 🔥 Table
         self.table = QTableWidget()
-        self.table.setColumnCount(6) # +1 for hidden ID
+        self.table.setColumnCount(9)  # +1 for hidden ID
         self.table.setHorizontalHeaderLabels([
-            "Sr No", "Item Name", "Category", "Weight", "Stock Qty", "ID"
+            "Tag No", "Item Code", "Item Name", "Design", "Gr Wt", "Net Wt", "Touch %", "MRP", "ID"
         ])
-        self.table.setColumnHidden(5, True)
+        self.table.setColumnHidden(8, True)
 
         # 🔥 Table UI Improvements
         self.table.setMinimumHeight(400)
@@ -190,6 +249,7 @@ class Inventory(QWidget):
         card_layout.setContentsMargins(20, 20, 20, 20)
 
         card_layout.addLayout(header_layout)
+        card_layout.addLayout(search_layout)
         card_layout.addLayout(btn_layout)
         card_layout.addWidget(self.table)
 
@@ -212,7 +272,7 @@ class Inventory(QWidget):
 
         # Setup Thread
         self.data_thread = InventoryLoaderThread()
-        self.data_thread.data_loaded.connect(self.update_ui)
+        self.data_thread.data_loaded.connect(self.on_data_loaded)
         self.data_thread.error_occurred.connect(self.handle_error)
 
     def resizeEvent(self, event):
@@ -228,53 +288,52 @@ class Inventory(QWidget):
         if not self.data_thread.isRunning():
             self.data_thread.start()
 
+    def on_data_loaded(self, items):
+        """Store items and apply current search filter."""
+        self.all_items = items
+        self.filter_items()
+        self.loading_overlay.hide()
+
+    def filter_items(self):
+        """Filter the stored items based on search text and update the table."""
+        query = self.search_input.text().strip().lower()
+        if query:
+            filtered = [
+                item for item in self.all_items
+                if query in (item["item_code"] or "").lower()
+                or query in item["item_name"].lower()
+                or query in (item["tag_no"] or "").lower()
+                or query in (item["design"] or "").lower()
+            ]
+        else:
+            filtered = self.all_items
+        self.update_ui(filtered)
+
     def update_ui(self, items):
         self.table.setRowCount(len(items))
         self.table.setAlternatingRowColors(True)
         self.table.setSortingEnabled(False)
 
         for row, item in enumerate(items):
-            index_item = QTableWidgetItem(str(row + 1))
-            index_item.setTextAlignment(Qt.AlignCenter)
-            index_item.setFont(QFont("Segoe UI", 14))
-            index_item.setFlags(Qt.ItemIsEnabled)
-            self.table.setItem(row, 0, index_item)
+            def _cell(text, bold=False, size=14):
+                wi = QTableWidgetItem(str(text) if text else "-")
+                wi.setTextAlignment(Qt.AlignCenter)
+                wi.setFont(QFont("Segoe UI", size, QFont.Bold if bold else QFont.Normal))
+                wi.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+                return wi
 
-            name_item = QTableWidgetItem(item["name"])
-            name_item.setTextAlignment(Qt.AlignCenter)
-            name_item.setFont(QFont("Segoe UI", 16))
-            self.table.setItem(row, 1, name_item)
+            self.table.setItem(row, 0, _cell(item["tag_no"]))
+            self.table.setItem(row, 1, _cell(item["item_code"], bold=True))
+            self.table.setItem(row, 2, _cell(item["item_name"], size=16))
+            self.table.setItem(row, 3, _cell(item["design"]))
+            self.table.setItem(row, 4, _cell(f"{item['gr_wt']} g" if item["gr_wt"] else "-"))
+            self.table.setItem(row, 5, _cell(f"{item['net_wt']} g" if item["net_wt"] else "-"))
+            self.table.setItem(row, 6, _cell(f"{item['touch']}%" if item["touch"] else "-"))
+            self.table.setItem(row, 7, _cell(f"{item['mrp']}" if item["mrp"] else "-"))
 
-            cat_item = QTableWidgetItem(item["category"] or "-")
-            cat_item.setTextAlignment(Qt.AlignCenter)
-            cat_item.setFont(QFont("Segoe UI", 14))
-            self.table.setItem(row, 2, cat_item)
-
-            weight_str = f"{item['weight']} g" if item["weight"] else "-"
-            weight_item = QTableWidgetItem(weight_str)
-            weight_item.setTextAlignment(Qt.AlignCenter)
-            weight_item.setFont(QFont("Segoe UI", 14))
-            self.table.setItem(row, 3, weight_item)
-
-            stock_item = QTableWidgetItem(str(item["stock_quantity"]))
-            stock_item.setTextAlignment(Qt.AlignCenter)
-            stock_item.setFont(QFont("Segoe UI", 16, QFont.Bold))
-            self.table.setItem(row, 4, stock_item)
-            
             id_item = QTableWidgetItem(str(item["id"]))
-            self.table.setItem(row, 5, id_item)
-
-            if item["stock_quantity"] < 5:
-                stock_item.setBackground(QColor("#ff4d4d"))
-                stock_item.setForeground(QColor("white"))
-            elif item["stock_quantity"] < 10:
-                stock_item.setBackground(QColor("#ffd166"))
-            else:
-                stock_item.setBackground(QColor("#00c853"))
-                stock_item.setForeground(QColor("white"))
+            self.table.setItem(row, 8, id_item)
                 
-        self.loading_overlay.hide()
-
     def handle_error(self, err_msg):
         self.loading_overlay.hide()
         QMessageBox.critical(self, "Database Error", f"Failed to load inventory data.\nPlease check your connection and try again.\n\nDetails: {err_msg}")
@@ -283,7 +342,7 @@ class Inventory(QWidget):
         dialog = ItemDialog()
         if dialog.exec_():
             data = dialog.get_data()
-            if not data["name"]:
+            if not data["item_name"]:
                 QMessageBox.warning(self, "Error", "Item name is required")
                 return
             db = next(get_db())
@@ -298,7 +357,7 @@ class Inventory(QWidget):
             QMessageBox.warning(self, "Select Item", "Please select an item to edit")
             return
         
-        item_id = int(self.table.item(row, 5).text())
+        item_id = int(self.table.item(row, 7).text())
         db = next(get_db())
         item = db.query(Item).get(item_id)
         if not item: return
@@ -306,11 +365,15 @@ class Inventory(QWidget):
         dialog = ItemDialog(item)
         if dialog.exec_():
             data = dialog.get_data()
-            if not data["name"]: return
-            item.name = data["name"]
-            item.category = data["category"]
-            item.weight = data["weight"]
-            item.stock_quantity = data["stock_quantity"]
+            if not data["item_name"]: return
+            item.item_code = data["item_code"]
+            item.tag_no = data["tag_no"]
+            item.item_name = data["item_name"]
+            item.design = data["design"]
+            item.gr_wt = data["gr_wt"]
+            item.net_wt = data["net_wt"]
+            item.touch = data["touch"]
+            item.mrp = data["mrp"]
             db.commit()
             self.refresh_data()
 
@@ -320,7 +383,7 @@ class Inventory(QWidget):
             QMessageBox.warning(self, "Select Item", "Please select an item to delete")
             return
 
-        item_id = int(self.table.item(row, 5).text())
+        item_id = int(self.table.item(row, 7).text())
         reply = QMessageBox.question(self, "Confirm Delete", "Are you sure you want to delete this item?", QMessageBox.Yes | QMessageBox.No)
         if reply == QMessageBox.Yes:
             db = next(get_db())
