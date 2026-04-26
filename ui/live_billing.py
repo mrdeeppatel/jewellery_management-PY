@@ -5,7 +5,7 @@ from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
     QTableWidget, QTableWidgetItem, QHeaderView, QFrame, QDateEdit,
     QApplication, QGraphicsDropShadowEffect, QSizePolicy, QAbstractItemView,
-    QFileDialog, QMessageBox, QScrollArea
+    QFileDialog, QMessageBox, QScrollArea, QComboBox
 )
 from PyQt5.QtCore import Qt, QDate, QTimer
 from PyQt5.QtGui import QFont, QColor
@@ -89,11 +89,11 @@ class LiveBillingPage(QWidget):
                 border: 2px dashed #FFA8A8;
             }
             .panelLabel {
-                font-size: 16px;
+                font-size: 14px;
                 color: #495057;
             }
             .panelValue {
-                font-size: 18px;
+                font-size: 16px;
                 font-weight: bold;
                 color: #212529;
             }
@@ -102,6 +102,22 @@ class LiveBillingPage(QWidget):
                 font-weight: bold;
                 color: #212529;
                 margin-bottom: 10px;
+            }
+            #entryCard {
+                background-color: #F8F9FA;
+                border: 1px solid #E9ECEF;
+                border-radius: 8px;
+                padding: 8px;
+                margin-bottom: 4px;
+            }
+            #remainingLabel {
+                font-size: 15px;
+                font-weight: bold;
+                color: #E03131;
+                padding: 6px 10px;
+                background-color: #FFF5F5;
+                border-radius: 6px;
+                border: 1px solid #FFD8D8;
             }
         """)
 
@@ -293,18 +309,28 @@ class LiveBillingPage(QWidget):
         self._search_timer.setInterval(250)
 
         # =========================================================
-        # RIGHT SIDE PANEL
+        # RIGHT SIDE PANEL — Gold Calculation System
         # =========================================================
+        self.calc_entries = []  # list of entry widget dicts
+
         right_widget = QWidget()
         right_layout = QVBoxLayout(right_widget)
         right_layout.setContentsMargins(0, 0, 0, 0)
-        
+        right_layout.setSpacing(0)
+
+        # Scrollable card so it works on smaller screens
+        right_scroll = QScrollArea()
+        right_scroll.setWidgetResizable(True)
+        right_scroll.setFrameShape(QFrame.NoFrame)
+        right_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        right_scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+
         self.card_frame = QFrame()
         self.card_frame.setObjectName("cardFrame")
         card_layout = QVBoxLayout(self.card_frame)
-        card_layout.setContentsMargins(25, 25, 25, 25)
-        card_layout.setSpacing(20)
-        
+        card_layout.setContentsMargins(18, 18, 18, 18)
+        card_layout.setSpacing(12)
+
         # Add Shadow
         shadow = QGraphicsDropShadowEffect(self)
         shadow.setBlurRadius(20)
@@ -313,36 +339,70 @@ class LiveBillingPage(QWidget):
         shadow.setColor(QColor(0, 0, 0, 30))
         self.card_frame.setGraphicsEffect(shadow)
 
-        # Live Weight
-        # self.lbl_live_weight = QLabel("⚖️ Weight is here\n0.000 g")
-        # self.lbl_live_weight.setObjectName("liveWeightLabel")
-        # self.lbl_live_weight.setAlignment(Qt.AlignCenter)
-        # card_layout.addWidget(self.lbl_live_weight)
+        # ── Section: Initial Total Fine (auto from table) ──
+        header_lbl = QLabel("⚖️ Gold Calculation")
+        header_lbl.setStyleSheet("font-size: 18px; font-weight: bold; color: #212529;")
+        card_layout.addWidget(header_lbl)
 
-        # Panel Values
-        self.lbl_total_fine = self.create_panel_row(card_layout, "Total Fine:", "0.000 g")
+        self.lbl_total_fine = self.create_panel_row(card_layout, "Total Fine (from items):", "0.000 g")
         self.lbl_current_fine = self.create_panel_row(card_layout, "Fine (current item):", "0.000 g")
+
+        # Thin divider
+        card_layout.addWidget(self._make_divider())
+
+        # ── Section: Dynamic Entries ──
+        entry_header_layout = QHBoxLayout()
+        entry_title = QLabel("📝 Settlement Entries")
+        entry_title.setStyleSheet("font-size: 15px; font-weight: bold; color: #495057;")
+        self.btn_add_entry = QPushButton("+ Add Entry")
+        self.btn_add_entry.setFixedHeight(30)
+        self.btn_add_entry.setStyleSheet(
+            "QPushButton { background-color: #339AF0; color: white; padding: 4px 14px; font-size: 13px; "
+            "font-weight: bold; border-radius: 5px; border: none; }"
+            "QPushButton:hover { background-color: #228BE6; }"
+        )
+        entry_header_layout.addWidget(entry_title)
+        entry_header_layout.addStretch()
+        entry_header_layout.addWidget(self.btn_add_entry)
+        card_layout.addLayout(entry_header_layout)
+
+        # Container for dynamic entry cards
+        self.entries_container = QVBoxLayout()
+        self.entries_container.setSpacing(6)
+        card_layout.addLayout(self.entries_container)
+
+        # Remaining balance label
+        self.lbl_remaining = QLabel("Remaining: 0.000 g")
+        self.lbl_remaining.setObjectName("remainingLabel")
+        self.lbl_remaining.setAlignment(Qt.AlignCenter)
+        card_layout.addWidget(self.lbl_remaining)
+
+        # Thin divider
+        card_layout.addWidget(self._make_divider())
+
+        # ── Section: Summary ──
+        summary_lbl = QLabel("📊 Summary")
+        summary_lbl.setStyleSheet("font-size: 15px; font-weight: bold; color: #495057;")
+        card_layout.addWidget(summary_lbl)
+
+        self.lbl_total_entry_fine = self.create_panel_row(card_layout, "Total Entry Fine:", "0.000 g")
         self.lbl_9950_fine = self.create_panel_row(card_layout, "99.50 Fine:", "0.000 g")
-        self.lbl_dhal = self.create_panel_row(card_layout, "Dhal:", "0.000")
-        
+
         # Rate Cut Input
         rate_layout = QHBoxLayout()
-        lbl_rate = QLabel("Rate Cut (10 gm):")
+        lbl_rate = QLabel("Rate Cut (per 10 gm):")
         lbl_rate.setProperty("class", "panelLabel")
         self.inp_rate_cut = QLineEdit()
         self.inp_rate_cut.setAlignment(Qt.AlignRight)
         self.inp_rate_cut.setText("0.00")
+        self.inp_rate_cut.setFixedWidth(120)
         rate_layout.addWidget(lbl_rate)
         rate_layout.addStretch()
         rate_layout.addWidget(self.inp_rate_cut)
         card_layout.addLayout(rate_layout)
 
-        # Divider
-        divider = QFrame()
-        divider.setFrameShape(QFrame.HLine)
-        divider.setFrameShadow(QFrame.Sunken)
-        divider.setStyleSheet("background-color: #DEE2E6;")
-        card_layout.addWidget(divider)
+        # Divider before amount
+        card_layout.addWidget(self._make_divider())
 
         # Amount
         amount_layout = QVBoxLayout()
@@ -354,9 +414,11 @@ class LiveBillingPage(QWidget):
         amount_layout.addWidget(lbl_amount_title)
         amount_layout.addWidget(self.lbl_amount)
         card_layout.addLayout(amount_layout)
-        
+
         card_layout.addStretch()
-        right_layout.addWidget(self.card_frame)
+
+        right_scroll.setWidget(self.card_frame)
+        right_layout.addWidget(right_scroll)
 
         # Add to main layout with stretch factors
         main_layout.addWidget(left_widget, stretch=7)
@@ -374,6 +436,190 @@ class LiveBillingPage(QWidget):
         row_layout.addWidget(lbl_val)
         layout.addLayout(row_layout)
         return lbl_val
+
+    def _make_divider(self):
+        """Create a thin horizontal divider line."""
+        divider = QFrame()
+        divider.setFrameShape(QFrame.HLine)
+        divider.setFrameShadow(QFrame.Sunken)
+        divider.setStyleSheet("background-color: #DEE2E6; max-height: 1px;")
+        return divider
+
+    # ── Dynamic entry management ──────────────────────────────────────────
+    def _add_calc_entry(self):
+        """Add a new settlement entry card to the right panel."""
+        entry_idx = len(self.calc_entries)
+
+        frame = QFrame()
+        frame.setObjectName("entryCard")
+        frame.setStyleSheet("""
+            QFrame#entryCard {
+                background-color: #F8F9FA;
+                border: 1px solid #E9ECEF;
+                border-radius: 8px;
+                padding: 6px;
+            }
+        """)
+        v_layout = QVBoxLayout(frame)
+        v_layout.setContentsMargins(10, 8, 10, 8)
+        v_layout.setSpacing(6)
+
+        # Row 1: Entry header + type selector + remove btn
+        row1 = QHBoxLayout()
+        lbl_num = QLabel(f"Entry #{entry_idx + 1}")
+        lbl_num.setStyleSheet("font-weight: bold; font-size: 13px; color: #495057;")
+
+        combo_type = QComboBox()
+        combo_type.addItems(["Gold + Purity", "Direct Fine"])
+        combo_type.setFixedWidth(130)
+        combo_type.setStyleSheet("padding: 4px 8px; font-size: 13px; border-radius: 4px;")
+
+        btn_remove = QPushButton("✕")
+        btn_remove.setFixedSize(24, 24)
+        btn_remove.setStyleSheet(
+            "QPushButton { background-color: transparent; color: #868E96; font-size: 14px; "
+            "font-weight: bold; border: none; border-radius: 4px; padding: 0px; }"
+            "QPushButton:hover { background-color: #FA5252; color: white; }"
+        )
+        btn_remove.setCursor(Qt.PointingHandCursor)
+
+        row1.addWidget(lbl_num)
+        row1.addStretch()
+        row1.addWidget(combo_type)
+        row1.addWidget(btn_remove)
+        v_layout.addLayout(row1)
+
+        # Row 2: Weight / Fine input + Purity input
+        row2 = QHBoxLayout()
+        row2.setSpacing(8)
+
+        inp_weight = QLineEdit()
+        inp_weight.setPlaceholderText("Weight (g)")
+        inp_weight.setStyleSheet("padding: 6px 8px; font-size: 13px;")
+
+        inp_purity = QLineEdit()
+        inp_purity.setPlaceholderText("Purity %")
+        inp_purity.setText("99.50")
+        inp_purity.setStyleSheet("padding: 6px 8px; font-size: 13px;")
+
+        row2.addWidget(inp_weight, stretch=1)
+        row2.addWidget(inp_purity, stretch=1)
+        v_layout.addLayout(row2)
+
+        # Row 3: Computed fine display
+        lbl_fine = QLabel("Fine: 0.000 g")
+        lbl_fine.setStyleSheet("font-size: 13px; font-weight: bold; color: #2B8A3E;")
+        lbl_fine.setAlignment(Qt.AlignRight)
+        v_layout.addWidget(lbl_fine)
+
+        # Store entry dict
+        entry = {
+            "frame": frame,
+            "combo_type": combo_type,
+            "inp_weight": inp_weight,
+            "inp_purity": inp_purity,
+            "lbl_fine": lbl_fine,
+            "lbl_num": lbl_num,
+        }
+        self.calc_entries.append(entry)
+        self.entries_container.addWidget(frame)
+
+        # Connect signals for real-time updates
+        inp_weight.textChanged.connect(self._recalc_entries)
+        inp_purity.textChanged.connect(self._recalc_entries)
+        combo_type.currentIndexChanged.connect(lambda: self._on_entry_type_changed(entry))
+
+        # Remove button
+        def remove_this():
+            self.calc_entries.remove(entry)
+            frame.setParent(None)
+            frame.deleteLater()
+            self._renumber_entries()
+            self._recalc_entries()
+
+        btn_remove.clicked.connect(remove_this)
+
+        # Trigger type change to set initial state
+        self._on_entry_type_changed(entry)
+        self._recalc_entries()
+
+    def _on_entry_type_changed(self, entry):
+        """Toggle between Gold+Purity and Direct Fine modes."""
+        is_direct = entry["combo_type"].currentText() == "Direct Fine"
+        if is_direct:
+            entry["inp_weight"].setPlaceholderText("Fine (g)")
+            entry["inp_purity"].setText("100.00")
+            entry["inp_purity"].setEnabled(False)
+            entry["inp_purity"].setStyleSheet("padding: 6px 8px; font-size: 13px; background-color: #E9ECEF; color: #868E96;")
+        else:
+            entry["inp_weight"].setPlaceholderText("Weight (g)")
+            entry["inp_purity"].setEnabled(True)
+            entry["inp_purity"].setStyleSheet("padding: 6px 8px; font-size: 13px;")
+            if entry["inp_purity"].text() == "100.00":
+                entry["inp_purity"].setText("99.50")
+        self._recalc_entries()
+
+    def _renumber_entries(self):
+        """Re-number entry labels after removal."""
+        for i, entry in enumerate(self.calc_entries):
+            entry["lbl_num"].setText(f"Entry #{i + 1}")
+
+    def _recalc_entries(self):
+        """Recalculate fine for each entry and update remaining / totals."""
+        # Get total fine from the items table
+        table_total_fine = 0.0
+        for row in range(self.table.rowCount()):
+            fine_item = self.table.item(row, 5)
+            if fine_item:
+                table_total_fine += self.get_float(fine_item.text())
+        self.lbl_total_fine.setText(f"{table_total_fine:.3f} g")
+
+        total_entry_fine = 0.0
+        remaining = table_total_fine
+
+        for entry in self.calc_entries:
+            weight = self.get_float(entry["inp_weight"].text())
+            purity = self.get_float(entry["inp_purity"].text())
+            is_direct = entry["combo_type"].currentText() == "Direct Fine"
+
+            if is_direct:
+                fine_val = weight  # direct fine
+            else:
+                fine_val = (weight * purity) / 100.0
+
+            entry["lbl_fine"].setText(f"Fine: {fine_val:.3f} g")
+            total_entry_fine += fine_val
+            remaining -= fine_val
+
+        self.lbl_total_entry_fine.setText(f"{total_entry_fine:.3f} g")
+
+        # Remaining
+        if remaining < 0:
+            self.lbl_remaining.setText(f"Remaining: {remaining:.3f} g  (OVER)")
+            self.lbl_remaining.setStyleSheet(
+                "font-size: 15px; font-weight: bold; color: #E03131; padding: 6px 10px; "
+                "background-color: #FFF5F5; border-radius: 6px; border: 1px solid #FFD8D8;"
+            )
+        else:
+            self.lbl_remaining.setText(f"Remaining: {remaining:.3f} g")
+            self.lbl_remaining.setStyleSheet(
+                "font-size: 15px; font-weight: bold; color: #1971C2; padding: 6px 10px; "
+                "background-color: #E7F5FF; border-radius: 6px; border: 1px solid #A5D8FF;"
+            )
+
+        # 99.50 Fine calculation
+        global_touch = self.get_float(self.global_touch_input.text(), 100.0)
+        if global_touch > 0:
+            pure_fine = (table_total_fine * 99.5) / global_touch
+        else:
+            pure_fine = 0.0
+        self.lbl_9950_fine.setText(f"{pure_fine:.3f} g")
+
+        # Amount
+        rate_10g = self.get_float(self.inp_rate_cut.text())
+        rate_per_gram = rate_10g / 10.0
+        amount = table_total_fine * rate_per_gram
+        self.lbl_amount.setText(f"₹ {amount:,.2f}")
 
     def setup_connections(self):
         # When global touch/wastage change, pre-fill quick entry if empty
@@ -395,7 +641,10 @@ class LiveBillingPage(QWidget):
         self.btn_close_sug.clicked.connect(self.hide_suggestions)
 
         # Rate calculation
-        self.inp_rate_cut.textChanged.connect(self.calculate_totals)
+        self.inp_rate_cut.textChanged.connect(self._recalc_entries)
+
+        # Add entry button
+        self.btn_add_entry.clicked.connect(self._add_calc_entry)
 
     def populate_quick_entry_defaults(self):
         if not self.qe_touch.text():
@@ -619,32 +868,8 @@ class LiveBillingPage(QWidget):
         super().keyPressEvent(event)
 
     def calculate_totals(self):
-        total_fine = 0.0
-        
-        for row in range(self.table.rowCount()):
-            fine_item = self.table.item(row, 5)
-            if fine_item:
-                total_fine += self.get_float(fine_item.text())
-                
-        self.lbl_total_fine.setText(f"{total_fine:.3f} g")
-        
-        # 99.50 Fine calculation
-        # According to requirements: Pure Fine = (Fine * 99.5) / Touch
-        # We will use the global touch as the divisor for the total fine conversion
-        global_touch = self.get_float(self.global_touch_input.text(), 100.0)
-        if global_touch > 0:
-            pure_fine = (total_fine * 99.5) / global_touch
-        else:
-            pure_fine = 0.0
-            
-        self.lbl_9950_fine.setText(f"{pure_fine:.3f} g")
-        
-        # Rate Conversion and Amount
-        rate_10g = self.get_float(self.inp_rate_cut.text())
-        rate_per_gram = rate_10g / 10.0
-        amount = total_fine * rate_per_gram
-        
-        self.lbl_amount.setText(f"₹ {amount:,.2f}")
+        """Recalculate all totals — delegates to _recalc_entries."""
+        self._recalc_entries()
 
     def generate_pdf(self):
         if self.table.rowCount() == 0:

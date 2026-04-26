@@ -1,0 +1,18 @@
+2026-04-25 18:14:49,077 - INFO - Printer Found: {'name': 'OneNote (Desktop)', 'status': 0, 'driver': 'Send to Microsoft OneNote 16 Driver', 'port': 'nul:'}
+2026-04-25 18:14:49,078 - INFO - Printer Found: {'name': 'OneNote (Desktop) - Protected', 'status': 0, 'driver': 'Microsoft Virtual Print Class Driver', 'port': 'Microsoft.Office.OneNoteVirtualPrinter_8wekyb3d8bbwe_onenote-psa:print-to-onenote_S-1-5-21-2104041135-766518738-1486902826-1001'}
+2026-04-25 18:14:49,079 - INFO - Printer Found: {'name': 'Microsoft Print to PDF', 'status': 0, 'driver': 'Microsoft Print To PDF', 'port': 'PORTPROMPT:'}
+2026-04-25 18:14:49,080 - INFO - Printer Found: {'name': 'Fax', 'status': 0, 'driver': 'Microsoft Shared Fax Driver', 'port': 'SHRFAX:'}
+2026-04-25 18:14:49,089 - INFO - Hostname: D7
+2026-04-25 18:14:49,089 - INFO - IP Address: 172.20.10.2
+2026-04-25 18:14:49,096 - INFO - PDF generated: invoice_a6.pdf
+2026-04-25 18:14:49,097 - INFO - No Epson found. Using default: Microsoft Print to PDF
+2026-04-25 18:14:49,190 - ERROR - Print error: (31, 'ShellExecute', 'A device attached to the system is not functioning.')
+2026-04-25 20:20:40,399 - INFO - Printer Found: {'name': 'OneNote (Desktop)', 'status': 0, 'driver': 'Send to Microsoft OneNote 16 Driver', 'port': 'nul:'}
+2026-04-25 20:20:40,401 - INFO - Printer Found: {'name': 'OneNote (Desktop) - Protected', 'status': 0, 'driver': 'Microsoft Virtual Print Class Driver', 'port': 'Microsoft.Office.OneNoteVirtualPrinter_8wekyb3d8bbwe_onenote-psa:print-to-onenote_S-1-5-21-2104041135-766518738-1486902826-1001'}
+2026-04-25 20:20:40,402 - INFO - Printer Found: {'name': 'Microsoft Print to PDF', 'status': 0, 'driver': 'Microsoft Print To PDF', 'port': 'PORTPROMPT:'}
+2026-04-25 20:20:40,402 - INFO - Printer Found: {'name': 'Fax', 'status': 0, 'driver': 'Microsoft Shared Fax Driver', 'port': 'SHRFAX:'}
+2026-04-25 20:20:40,411 - INFO - Hostname: D7
+2026-04-25 20:20:40,411 - INFO - IP Address: 127.0.0.1
+2026-04-25 20:20:40,418 - INFO - PDF generated: invoice_a6.pdf
+2026-04-25 20:20:40,418 - INFO - No Epson found. Using default: Microsoft Print to PDF
+2026-04-25 20:20:40,474 - ERROR - Print error: (31, 'ShellExecute', 'A device attached to the system is not functioning.')
