@@ -406,7 +406,7 @@ class LiveBillingPage(QWidget):
 
         # Amount
         amount_layout = QVBoxLayout()
-        lbl_amount_title = QLabel("Total Amount")
+        lbl_amount_title = QLabel("Final Price")
         lbl_amount_title.setProperty("class", "panelLabel")
         self.lbl_amount = QLabel("₹ 0.00")
         self.lbl_amount.setObjectName("amountLabel")
@@ -615,11 +615,16 @@ class LiveBillingPage(QWidget):
             pure_fine = 0.0
         self.lbl_9950_fine.setText(f"{pure_fine:.3f} g")
 
-        # Amount
+        # Final Price based on Remaining balance
         rate_10g = self.get_float(self.inp_rate_cut.text())
         rate_per_gram = rate_10g / 10.0
-        amount = table_total_fine * rate_per_gram
-        self.lbl_amount.setText(f"₹ {amount:,.2f}")
+        final_price = remaining * rate_per_gram
+        if final_price < 0:
+            self.lbl_amount.setText(f"- ₹ {abs(final_price):,.2f}")
+            self.lbl_amount.setStyleSheet("font-size: 32px; font-weight: bold; color: #E03131;")
+        else:
+            self.lbl_amount.setText(f"₹ {final_price:,.2f}")
+            self.lbl_amount.setStyleSheet("font-size: 32px; font-weight: bold; color: #2B8A3E;")
 
     def setup_connections(self):
         # When global touch/wastage change, pre-fill quick entry if empty
