@@ -883,12 +883,13 @@ class LiveBillingPage(QWidget):
 
         # Gather bill info
         voucher = self.voucher_input.text().strip() or "N/A"
-        date_str = self.date_input.date().toString("dd-MM-yyyy")
+        date_str = self.date_input.date().toString("yyyy-MM-dd")
         party = self.party_input.text().strip() or "Walk-in Customer"
         total_fine = self.lbl_total_fine.text()
         fine_9950 = self.lbl_9950_fine.text()
         rate_cut = self.inp_rate_cut.text().strip() or "0.00"
         amount = self.lbl_amount.text()
+        remaining = self.lbl_remaining.text()
 
         # Ask user where to save
         default_name = f"Bill_{voucher}_{date_str}.pdf"
@@ -901,7 +902,7 @@ class LiveBillingPage(QWidget):
         try:
             self._save_bill_to_db(voucher, party, total_fine, fine_9950, rate_cut, amount)
             self._build_pdf(file_path, voucher, date_str, party,
-                            total_fine, fine_9950, rate_cut, amount)
+                            total_fine, fine_9950, rate_cut, amount, remaining)
             QMessageBox.information(self, "Success", f"Bill saved to DB and PDF generated successfully!\n{file_path}")
             os.startfile(file_path)  # Open the PDF on Windows
             
@@ -920,7 +921,7 @@ class LiveBillingPage(QWidget):
             total_fine = self.get_float(total_fine_str.replace(" g", ""))
             fine_9950 = self.get_float(fine_9950_str.replace(" g", ""))
             rate_cut = self.get_float(rate_cut_str)
-            amount = self.get_float(amount_str.replace("₹", "").replace(",", "").strip())
+            amount = self.get_float(amount_str.replace("₹", "").replace(",", "").replace("-", "").strip())
 
             new_bill = Bill(
                 voucher=voucher if voucher != "N/A" else None,
@@ -960,124 +961,197 @@ class LiveBillingPage(QWidget):
             raise e
 
     def _build_pdf(self, file_path, voucher, date_str, party,
-                   total_fine, fine_9950, rate_cut, amount):
+                   total_fine, fine_9950, rate_cut, amount, remaining):
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.ttfonts import TTFont
+
+        # Register Gujarati font (Shruti ships with Windows)
+        font_path = r'C:\Windows\Fonts\shruti.ttf'
+        font_path_bold = r'C:\Windows\Fonts\shrutib.ttf'
+        try:
+            pdfmetrics.registerFont(TTFont('Shruti', font_path))
+            pdfmetrics.registerFont(TTFont('ShrutiBold', font_path_bold))
+            guj_font = 'ShrutiBold'
+            guj_font_normal = 'Shruti'
+        except Exception:
+            guj_font = 'Helvetica-Bold'
+            guj_font_normal = 'Helvetica'
+
+        # A6 page size (105 x 148 mm) — receipt style
+        page_w = 148 * mm
+        page_h = 210 * mm
         doc = SimpleDocTemplate(
-            file_path, pagesize=A4,
-            topMargin=15*mm, bottomMargin=15*mm,
-            leftMargin=15*mm, rightMargin=15*mm
+            file_path, pagesize=(page_w, page_h),
+            topMargin=8*mm, bottomMargin=8*mm,
+            leftMargin=6*mm, rightMargin=6*mm
         )
+        usable_w = page_w - 12*mm
         elements = []
         styles = getSampleStyleSheet()
         black = colors.black
+        now = datetime.now()
 
-        title_style = ParagraphStyle(
-            'BillTitle', parent=styles['Title'],
-            fontSize=18, leading=22, alignment=TA_CENTER,
-            textColor=black, fontName='Helvetica-Bold', spaceAfter=2
-        )
-
-        # ── Title ──
-        elements.append(Paragraph("JEWELLERY BILL", title_style))
-        elements.append(Spacer(1, 6*mm))
-
-        # ── Bill Info as bordered table ──
-        info_data = [
-            ["Voucher", voucher, "Date", date_str],
-            ["Party", party, "Generated", datetime.now().strftime('%d-%m-%Y %I:%M %p')],
-        ]
-        info_table = Table(info_data, colWidths=[doc.width*0.15, doc.width*0.35, doc.width*0.15, doc.width*0.35])
-        info_table.setStyle(TableStyle([
-            ('FONTNAME', (0,0), (0,-1), 'Helvetica-Bold'),
-            ('FONTNAME', (2,0), (2,-1), 'Helvetica-Bold'),
-            ('FONTSIZE', (0,0), (-1,-1), 10),
+        # ── Top Header: Time | Date | Slip No ──
+        header_data = [[
+            now.strftime('%I:%M:%S %p'),
+            date_str,
+            f"Slip: {voucher}"
+        ]]
+        header_table = Table(header_data, colWidths=[usable_w*0.33]*3)
+        header_table.setStyle(TableStyle([
+            ('FONTNAME', (0,0), (-1,-1), 'Helvetica'),
+            ('FONTSIZE', (0,0), (-1,-1), 8),
             ('TEXTCOLOR', (0,0), (-1,-1), black),
-            ('GRID', (0,0), (-1,-1), 0.75, black),
-            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-            ('TOPPADDING', (0,0), (-1,-1), 6),
-            ('BOTTOMPADDING', (0,0), (-1,-1), 6),
-            ('LEFTPADDING', (0,0), (-1,-1), 6),
+            ('ALIGN', (0,0), (0,0), 'LEFT'),
+            ('ALIGN', (1,0), (1,0), 'CENTER'),
+            ('ALIGN', (2,0), (2,0), 'RIGHT'),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 2),
+            ('TOPPADDING', (0,0), (-1,-1), 2),
         ]))
-        elements.append(info_table)
-        elements.append(Spacer(1, 8*mm))
+        elements.append(header_table)
 
-        # ── Items Table ──
-        header_row = ["#", "Tag / Design", "Item Name", "Net Wt (g)", "Touch %", "Wastage %", "Fine (g)"]
-        table_data = [header_row]
+        # Party name
+        if party and party != "Walk-in Customer":
+            party_style = ParagraphStyle('Party', parent=styles['Normal'],
+                fontSize=9, alignment=TA_LEFT, textColor=black,
+                fontName='Helvetica-Bold', spaceBefore=2, spaceAfter=2)
+            elements.append(Paragraph(f"Party: {party}", party_style))
 
+        elements.append(Spacer(1, 3*mm))
+
+        # ── Main Items Table with Gujarati Headers ──
+        # Columns: વિગત | ગ્રોસ | લેસ | વજન | ટચ | ફાઈન | ભાવ | રૂપિયા
+        guj_headers = [
+            "\u0AB5\u0ABF\u0A97\u0AA4",    # વિગત
+            "\u0A97\u0ACD\u0AB0\u0ACB\u0AB8",  # ગ્રોસ
+            "\u0AB2\u0AC7\u0AB8",           # લેસ
+            "\u0AB5\u0A9C\u0AA8",           # વજન
+            "\u0A9F\u0A9A",                 # ટચ
+            "\u0AAB\u0ABE\u0A88\u0AA8",     # ફાઈન
+            "\u0AAD\u0ABE\u0AB5",           # ભાવ
+            "\u0AB0\u0AC2\u0AAA\u0ABF\u0AAF\u0ABE",  # રૂપિયા
+        ]
+        table_data = [guj_headers]
+
+        total_gross = 0.0
+        total_less = 0.0
         total_net_wt = 0.0
         total_fine_val = 0.0
+        total_amount_val = 0.0
+        rate_val = self.get_float(rate_cut)
+        rate_per_gram = rate_val / 10.0
 
         for row in range(self.table.rowCount()):
             tag = self.table.item(row, 0).text() if self.table.item(row, 0) else ""
             name = self.table.item(row, 1).text() if self.table.item(row, 1) else ""
-            net_wt = self.table.item(row, 2).text() if self.table.item(row, 2) else "0"
-            touch = self.table.item(row, 3).text() if self.table.item(row, 3) else "0"
-            wastage = self.table.item(row, 4).text() if self.table.item(row, 4) else "0"
-            fine = self.table.item(row, 5).text() if self.table.item(row, 5) else "0"
+            net_wt_val = self.get_float(self.table.item(row, 2).text() if self.table.item(row, 2) else "0")
+            touch_val = self.get_float(self.table.item(row, 3).text() if self.table.item(row, 3) else "0")
+            wastage_val = self.get_float(self.table.item(row, 4).text() if self.table.item(row, 4) else "0")
+            fine_val = self.get_float(self.table.item(row, 5).text() if self.table.item(row, 5) else "0")
 
-            total_net_wt += self.get_float(net_wt)
-            total_fine_val += self.get_float(fine)
+            # Gross = net_wt + wastage weight approximation; Less = gross - net
+            gross_val = net_wt_val
+            less_val = 0.0
+            row_amount = fine_val * rate_per_gram
 
-            table_data.append([str(row+1), tag, name, net_wt, touch, wastage, fine])
+            detail = f"{tag}" if tag else name
 
-        table_data.append(["", "", "TOTAL", f"{total_net_wt:.3f}", "", "", f"{total_fine_val:.3f}"])
+            total_gross += gross_val
+            total_less += less_val
+            total_net_wt += net_wt_val
+            total_fine_val += fine_val
+            total_amount_val += row_amount
 
-        col_widths = [25, 70, 90, 60, 55, 60, 60]
-        items_table = Table(table_data, colWidths=col_widths, repeatRows=1)
+            table_data.append([
+                detail,
+                f"{gross_val:.3f}",
+                f"{less_val:.3f}",
+                f"{net_wt_val:.3f}",
+                f"{touch_val:.0f}",
+                f"{fine_val:.3f}",
+                f"{rate_val:.0f}" if rate_val else "",
+                f"{row_amount:.2f}" if rate_val else "",
+            ])
 
+        # Total row
+        table_data.append([
+            "Total",
+            f"{total_gross:.3f}",
+            f"{total_less:.3f}",
+            f"{total_net_wt:.3f}",
+            "",
+            f"{total_fine_val:.3f}",
+            "",
+            f"{total_amount_val:.2f}" if rate_val else "",
+        ])
+
+        # Column widths for receipt
+        cw = [usable_w*0.16, usable_w*0.12, usable_w*0.10, usable_w*0.12,
+              usable_w*0.08, usable_w*0.13, usable_w*0.12, usable_w*0.17]
+        items_table = Table(table_data, colWidths=cw, repeatRows=1)
+
+        num_rows = len(table_data)
         items_table.setStyle(TableStyle([
             ('TEXTCOLOR', (0,0), (-1,-1), black),
-            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0,0), (-1,0), 10),
-            ('TOPPADDING', (0,0), (-1,0), 8),
-            ('BOTTOMPADDING', (0,0), (-1,0), 8),
-            ('FONTSIZE', (0,1), (-1,-1), 9),
-            ('TOPPADDING', (0,1), (-1,-1), 5),
-            ('BOTTOMPADDING', (0,1), (-1,-1), 5),
-            ('ALIGN', (0,0), (0,-1), 'CENTER'),
-            ('ALIGN', (3,0), (-1,-1), 'RIGHT'),
-            ('GRID', (0,0), (-1,-1), 0.75, black),
+            # Header row — Gujarati font
+            ('FONTNAME', (0,0), (-1,0), guj_font),
+            ('FONTSIZE', (0,0), (-1,0), 8),
+            ('TOPPADDING', (0,0), (-1,0), 5),
+            ('BOTTOMPADDING', (0,0), (-1,0), 5),
+            ('ALIGN', (0,0), (-1,0), 'CENTER'),
+            # Data rows
+            ('FONTNAME', (0,1), (-1,-1), 'Helvetica'),
+            ('FONTSIZE', (0,1), (-1,-1), 7),
+            ('TOPPADDING', (0,1), (-1,-1), 3),
+            ('BOTTOMPADDING', (0,1), (-1,-1), 3),
+            # Align numbers right
+            ('ALIGN', (1,1), (-1,-1), 'RIGHT'),
+            ('ALIGN', (0,1), (0,-1), 'LEFT'),
+            # Grid
+            ('GRID', (0,0), (-1,-1), 0.5, black),
+            # Total row bold
             ('FONTNAME', (0,-1), (-1,-1), 'Helvetica-Bold'),
+            ('FONTSIZE', (0,-1), (-1,-1), 7),
         ]))
         elements.append(items_table)
-        elements.append(Spacer(1, 8*mm))
+        elements.append(Spacer(1, 4*mm))
 
-        # ── Bill Summary ──
-        summary_data = [
-            ["Bill Summary", ""],
-            ["Total Fine", total_fine],
-            ["99.50 Fine", fine_9950],
-            ["Rate Cut (per 10 gm)", f"Rs. {rate_cut}"],
-            ["Total Amount", amount],
-        ]
-        summary_table = Table(summary_data, colWidths=[doc.width*0.5, doc.width*0.5])
-        summary_table.setStyle(TableStyle([
+        # ── Bottom Section: P.Wt | Qty | બાકી ──
+        remaining_text = remaining.replace("Remaining: ", "").replace(" g", "").replace("  (OVER)", "")
+        baki_label = "\u0AAC\u0ABE\u0A95\u0AC0"  # બાકી
+        bottom_data = [[
+            f"P.Wt: {total_gross:.3f}",
+            f"Qty: {self.table.rowCount()}",
+            f"{baki_label}: {remaining_text}",
+        ]]
+        bottom_table = Table(bottom_data, colWidths=[usable_w*0.35, usable_w*0.25, usable_w*0.40])
+        bottom_table.setStyle(TableStyle([
+            ('FONTNAME', (0,0), (1,0), 'Helvetica-Bold'),
+            ('FONTNAME', (2,0), (2,0), guj_font),
+            ('FONTSIZE', (0,0), (-1,-1), 8),
             ('TEXTCOLOR', (0,0), (-1,-1), black),
-            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0,0), (-1,0), 11),
-            ('SPAN', (0,0), (-1,0)),
-            ('ALIGN', (0,0), (-1,0), 'CENTER'),
-            ('FONTNAME', (0,1), (0,-1), 'Helvetica-Bold'),
-            ('FONTSIZE', (0,1), (-1,-1), 10),
-            ('ALIGN', (1,1), (1,-1), 'RIGHT'),
-            ('GRID', (0,0), (-1,-1), 0.75, black),
-            ('TOPPADDING', (0,0), (-1,-1), 6),
-            ('BOTTOMPADDING', (0,0), (-1,-1), 6),
-            ('LEFTPADDING', (0,0), (-1,-1), 6),
-            ('FONTNAME', (0,-1), (-1,-1), 'Helvetica-Bold'),
-            ('FONTSIZE', (0,-1), (-1,-1), 11),
+            ('ALIGN', (0,0), (0,0), 'LEFT'),
+            ('ALIGN', (1,0), (1,0), 'CENTER'),
+            ('ALIGN', (2,0), (2,0), 'RIGHT'),
+            ('BOX', (0,0), (-1,-1), 0.5, black),
+            ('TOPPADDING', (0,0), (-1,-1), 4),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 4),
         ]))
-        elements.append(summary_table)
-        elements.append(Spacer(1, 10*mm))
+        elements.append(bottom_table)
 
-        # ── Generated timestamp ──
-        ts_style = ParagraphStyle(
-            'Timestamp', parent=styles['Normal'],
-            fontSize=8, alignment=TA_CENTER,
-            textColor=black, spaceBefore=10
-        )
+        # ── Final Price line ──
+        elements.append(Spacer(1, 3*mm))
+        price_style = ParagraphStyle('FinalPrice', parent=styles['Normal'],
+            fontSize=10, alignment=TA_RIGHT, textColor=black,
+            fontName='Helvetica-Bold', spaceBefore=2, spaceAfter=2)
+        elements.append(Paragraph(f"Final Price: {amount}", price_style))
+
+        # ── Timestamp ──
+        elements.append(Spacer(1, 4*mm))
+        ts_style = ParagraphStyle('Timestamp', parent=styles['Normal'],
+            fontSize=6, alignment=TA_CENTER, textColor=black, spaceBefore=4)
         elements.append(Paragraph(
-            f"Generated on: {datetime.now().strftime('%d-%m-%Y %I:%M:%S %p')}",
+            f"Generated: {now.strftime('%d-%m-%Y %I:%M:%S %p')}",
             ts_style
         ))
 
