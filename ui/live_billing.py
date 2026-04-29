@@ -7,7 +7,7 @@ from PyQt5.QtWidgets import (
     QApplication, QGraphicsDropShadowEffect, QSizePolicy, QAbstractItemView,
     QFileDialog, QMessageBox, QScrollArea, QComboBox
 )
-from PyQt5.QtCore import Qt, QDate, QTimer
+from PyQt5.QtCore import Qt, QDate, QTimer, QEvent
 from PyQt5.QtGui import QFont, QColor
 from models.database import get_db, Item
 from reportlab.lib.pagesizes import A4
@@ -18,12 +18,77 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
 
 
+class _KeyboardNavFilter(QWidget):
+    """Event filter that intercepts Tab/Enter on form fields for billing-style navigation."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self._parent = parent
+
+    def _get_order(self):
+        """Dynamically fetch the current tab order from the parent widget."""
+        return self._parent._get_tab_order()
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.KeyPress:
+            key = event.key()
+            modifiers = event.modifiers()
+
+            # ── ENTER key ──────────────────────────────────────────
+            if key in (Qt.Key_Return, Qt.Key_Enter):
+                # If focused widget is a button → click it
+                if isinstance(obj, QPushButton):
+                    obj.click()
+                    return True
+                # If focused widget is an input or combobox → advance like TAB
+                if isinstance(obj, (QLineEdit, QDateEdit, QComboBox)):
+                    self._move_focus(obj, forward=True)
+                    return True
+
+            # ── TAB / Shift+TAB ────────────────────────────────────
+            if key == Qt.Key_Tab and not (modifiers & Qt.ShiftModifier):
+                if obj in self._get_order():
+                    self._move_focus(obj, forward=True)
+                    return True
+            if key == Qt.Key_Backtab or (key == Qt.Key_Tab and (modifiers & Qt.ShiftModifier)):
+                if obj in self._get_order():
+                    self._move_focus(obj, forward=False)
+                    return True
+
+        # ── Auto-select-all on focus-in ────────────────────────────
+        if event.type() == QEvent.FocusIn and isinstance(obj, QLineEdit):
+            # Use a short timer so the selection happens after Qt's default handling
+            QTimer.singleShot(0, obj.selectAll)
+
+        return False   # pass unhandled events through
+
+    def _move_focus(self, current, forward=True):
+        """Move focus to the next/previous widget in the dynamic tab order."""
+        tab_order = self._get_order()
+        if current not in tab_order:
+            return
+        idx = tab_order.index(current)
+        step = 1 if forward else -1
+        total = len(tab_order)
+        for _ in range(total):
+            idx = (idx + step) % total
+            target = tab_order[idx]
+            # Skip read-only / disabled / hidden widgets
+            if not target.isEnabled() or not target.isVisible():
+                continue
+            if isinstance(target, QLineEdit) and target.isReadOnly():
+                continue
+            target.setFocus()
+            return
+
+
 class LiveBillingPage(QWidget):
     def __init__(self):
         super().__init__()
         self._prev_code_len = 0   # track field length to detect erase
         self.init_ui()
         self.setup_connections()
+        self.setup_keyboard_navigation()
 
     def init_ui(self):
         self.setWindowTitle("Live Billing Panel")
@@ -50,10 +115,15 @@ class LiveBillingPage(QWidget):
                 padding: 10px 20px;
                 border-radius: 6px;
                 font-weight: bold;
-                border: none;
+                border: 2px solid transparent;
             }
             QPushButton:hover {
                 background-color: #228BE6;
+            }
+            QPushButton:focus {
+                background-color: #228BE6;
+                border: 2px solid #1864AB;
+                outline: none;
             }
             QTableWidget {
                 background-color: white;
@@ -189,9 +259,24 @@ class LiveBillingPage(QWidget):
         # Table Controls
         table_controls_layout = QHBoxLayout()
         self.btn_remove = QPushButton("🗑 Delete Selected")
-        self.btn_remove.setStyleSheet("background-color: #FA5252; color: white; padding: 6px 12px; font-size: 13px; font-weight: bold; border-radius: 4px;")
+        self.btn_remove.setStyleSheet("""
+            QPushButton { background-color: #FA5252; color: white; padding: 6px 12px; font-size: 13px; font-weight: bold; border-radius: 4px; border: 2px solid transparent; }
+            QPushButton:hover { background-color: #E03131; }
+            QPushButton:focus { background-color: #E03131; border: 2px solid #C92A2A; outline: none; }
+        """)
+        self.btn_preview_pdf = QPushButton("👁 Preview Bill")
+        self.btn_preview_pdf.setStyleSheet("""
+            QPushButton { background-color: #4DABF7; color: white; padding: 6px 14px; font-size: 13px; font-weight: bold; border-radius: 4px; border: 2px solid transparent; }
+            QPushButton:hover { background-color: #339AF0; }
+            QPushButton:focus { background-color: #339AF0; border: 2px solid #228BE6; outline: none; }
+        """)
         self.btn_generate_pdf = QPushButton("📄 Generate PDF Bill")
-        self.btn_generate_pdf.setStyleSheet("background-color: #2B8A3E; color: white; padding: 6px 14px; font-size: 13px; font-weight: bold; border-radius: 4px;")
+        self.btn_generate_pdf.setStyleSheet("""
+            QPushButton { background-color: #2B8A3E; color: white; padding: 6px 14px; font-size: 13px; font-weight: bold; border-radius: 4px; border: 2px solid transparent; }
+            QPushButton:hover { background-color: #2F9E44; }
+            QPushButton:focus { background-color: #2F9E44; border: 2px solid #238531; outline: none; }
+        """)
+        table_controls_layout.addWidget(self.btn_preview_pdf)
         table_controls_layout.addWidget(self.btn_generate_pdf)
         table_controls_layout.addStretch()
         table_controls_layout.addWidget(self.btn_remove)
@@ -358,8 +443,9 @@ class LiveBillingPage(QWidget):
         self.btn_add_entry.setFixedHeight(30)
         self.btn_add_entry.setStyleSheet(
             "QPushButton { background-color: #339AF0; color: white; padding: 4px 14px; font-size: 13px; "
-            "font-weight: bold; border-radius: 5px; border: none; }"
+            "font-weight: bold; border-radius: 5px; border: 2px solid transparent; }"
             "QPushButton:hover { background-color: #228BE6; }"
+            "QPushButton:focus { background-color: #228BE6; border: 2px solid #1864AB; outline: none; }"
         )
         entry_header_layout.addWidget(entry_title)
         entry_header_layout.addStretch()
@@ -472,7 +558,10 @@ class LiveBillingPage(QWidget):
         combo_type = QComboBox()
         combo_type.addItems(["Gold + Purity", "Direct Fine"])
         combo_type.setFixedWidth(130)
-        combo_type.setStyleSheet("padding: 4px 8px; font-size: 13px; border-radius: 4px;")
+        combo_type.setStyleSheet("""
+            QComboBox { padding: 4px 8px; font-size: 13px; border-radius: 4px; border: 1px solid #CED4DA; background-color: white; }
+            QComboBox:focus { border: 2px solid #4DABF7; outline: none; }
+        """)
 
         btn_remove = QPushButton("✕")
         btn_remove.setFixedSize(24, 24)
@@ -539,9 +628,18 @@ class LiveBillingPage(QWidget):
 
         btn_remove.clicked.connect(remove_this)
 
+        # Install keyboard nav filter on the new entry widgets
+        if hasattr(self, '_nav_filter'):
+            for w in [combo_type, inp_weight, inp_purity]:
+                w.setFocusPolicy(Qt.StrongFocus)
+                w.installEventFilter(self._nav_filter)
+
         # Trigger type change to set initial state
         self._on_entry_type_changed(entry)
         self._recalc_entries()
+
+        # Auto-focus the new dropdown field so the user can select type first
+        QTimer.singleShot(50, combo_type.setFocus)
 
     def _on_entry_type_changed(self, entry):
         """Toggle between Gold+Purity and Direct Fine modes."""
@@ -640,6 +738,7 @@ class LiveBillingPage(QWidget):
         self.btn_add.clicked.connect(self.add_item_to_table)
         self.btn_remove.clicked.connect(self.remove_selected_item)
         self.btn_generate_pdf.clicked.connect(self.generate_pdf)
+        self.btn_preview_pdf.clicked.connect(self.preview_pdf)
         
         # Live autocomplete
         self.qe_item_code.textChanged.connect(self._on_code_changed)
@@ -650,6 +749,87 @@ class LiveBillingPage(QWidget):
 
         # Add entry button
         self.btn_add_entry.clicked.connect(self._add_calc_entry)
+
+    # ── Keyboard Navigation ───────────────────────────────────────────────
+    def setup_keyboard_navigation(self):
+        """Install event filter on all navigable widgets for billing-style keyboard flow."""
+
+        # Static widgets that are always in the tab order
+        self._static_tab_widgets = [
+            # ── Header ──
+            self.voucher_input,
+            self.date_input,
+            self.party_input,
+            # ── Global fields ──
+            self.global_touch_input,
+            self.global_wastage_input,
+            self.global_tag_input,
+            # ── Quick Entry (fast-loop zone) ──
+            self.qe_item_code,
+            self.qe_net_weight,
+            self.qe_touch,
+            self.qe_wastage,
+            self.qe_fine,       # read-only → skipped automatically
+            self.btn_add,
+            # ── Table Controls ──
+            self.btn_preview_pdf,
+            self.btn_generate_pdf,
+            # ── Right Panel ──
+            self.inp_rate_cut,
+            self.btn_add_entry,
+        ]
+
+        # Set focus policy on all static widgets
+        for w in self._static_tab_widgets:
+            w.setFocusPolicy(Qt.StrongFocus)
+
+        # Create and install the event filter
+        self._nav_filter = _KeyboardNavFilter(self)
+        for w in self._static_tab_widgets:
+            w.installEventFilter(self._nav_filter)
+
+        # After "Add Item" is clicked, auto-focus back to Item Code for rapid entry
+        self.btn_add.clicked.connect(lambda: QTimer.singleShot(50, self._focus_item_code))
+
+    def _get_tab_order(self):
+        """Build the full tab order dynamically, including right-panel settlement entries."""
+        order = [
+            # ── Header ──
+            self.voucher_input,
+            self.date_input,
+            self.party_input,
+            # ── Global fields ──
+            self.global_touch_input,
+            self.global_wastage_input,
+            self.global_tag_input,
+            # ── Quick Entry ──
+            self.qe_item_code,
+            self.qe_net_weight,
+            self.qe_touch,
+            self.qe_wastage,
+            self.qe_fine,
+            self.btn_add,
+            # ── Table Controls ──
+            self.btn_preview_pdf,
+            self.btn_generate_pdf,
+            # ── Right Panel: Rate Cut ──
+            self.inp_rate_cut,
+            # ── Right Panel: Add Entry button ──
+            self.btn_add_entry,
+        ]
+
+        # Append dynamic settlement entry fields (type → weight → purity for each entry)
+        for entry in self.calc_entries:
+            order.append(entry["combo_type"])
+            order.append(entry["inp_weight"])
+            order.append(entry["inp_purity"])
+
+        return order
+
+    def _focus_item_code(self):
+        """Set focus to the Item Code field for the next entry."""
+        self.qe_item_code.setFocus()
+        self.qe_item_code.selectAll()
 
     def populate_quick_entry_defaults(self):
         if not self.qe_touch.text():
@@ -701,7 +881,7 @@ class LiveBillingPage(QWidget):
         self.table.setItem(row, 3, QTableWidgetItem(f"{touch:.2f}"))
         self.table.setItem(row, 4, QTableWidgetItem(f"{wastage:.2f}"))
         self.table.setItem(row, 5, QTableWidgetItem(f"{fine:.3f}"))
-        self.table.setItem(row, 6, QTableWidgetItem("N")) # Optional flag
+        self._add_delete_button(row)
         
         # Clear quick entry
         self.qe_item_code.clear()
@@ -715,6 +895,27 @@ class LiveBillingPage(QWidget):
         self._current_selected_name = None
         
         self.calculate_totals()
+
+    def _add_delete_button(self, row):
+        """Add a styled delete icon button to the 'D' column of the given row."""
+        btn = QPushButton("🗑")
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setToolTip("Delete this row")
+        btn.setStyleSheet(
+            "QPushButton { background-color: transparent; color: #E03131; font-size: 16px; "
+            "border: none; padding: 2px 6px; border-radius: 4px; }"
+            "QPushButton:hover { background-color: #FFF5F5; }"
+        )
+        btn.clicked.connect(lambda checked, r=row: self._delete_table_row(btn))
+        self.table.setCellWidget(row, 6, btn)
+
+    def _delete_table_row(self, btn):
+        """Find the row containing the button and remove it."""
+        for r in range(self.table.rowCount()):
+            if self.table.cellWidget(r, 6) is btn:
+                self.table.removeRow(r)
+                self.calculate_totals()
+                return
 
     def remove_selected_item(self):
         current_row = self.table.currentRow()
@@ -875,6 +1076,81 @@ class LiveBillingPage(QWidget):
     def calculate_totals(self):
         """Recalculate all totals — delegates to _recalc_entries."""
         self._recalc_entries()
+
+    def preview_pdf(self):
+        """Generates a temporary PDF and shows an image preview in a dialog without saving to DB."""
+        if self.table.rowCount() == 0:
+            QMessageBox.warning(self, "No Data", "Please add items to the table before previewing a bill.")
+            return
+
+        import os
+        import tempfile
+        from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QScrollArea
+        from PyQt5.QtGui import QImage, QPixmap
+        try:
+            import fitz  # PyMuPDF
+        except ImportError:
+            QMessageBox.critical(self, "Dependency Missing", "PyMuPDF is required for preview. Please install it with 'pip install PyMuPDF'.")
+            return
+
+        # Gather bill info
+        voucher = self.voucher_input.text().strip() or "N/A"
+        date_str = self.date_input.date().toString("dd-MM-yyyy")
+        party = self.party_input.text().strip() or "Walk-in Customer"
+        total_fine = self.lbl_total_fine.text()
+        fine_9950 = self.lbl_9950_fine.text()
+        rate_cut = self.inp_rate_cut.text().strip() or "0.00"
+        amount = self.lbl_amount.text()
+
+        # Generate to temp file
+        temp_dir = tempfile.gettempdir()
+        temp_pdf = os.path.join(temp_dir, "preview_bill.pdf")
+        
+        try:
+            self._build_pdf(temp_pdf, voucher, date_str, party, total_fine, fine_9950, rate_cut, amount)
+            
+            # Render PDF with PyMuPDF
+            doc = fitz.open(temp_pdf)
+            page = doc.load_page(0)  # Load first page
+            pix = page.get_pixmap(dpi=150) # Render to image
+            
+            # Convert to QImage
+            fmt = QImage.Format_RGBA8888 if pix.alpha else QImage.Format_RGB888
+            qimg = QImage(pix.samples, pix.width, pix.height, pix.stride, fmt)
+            qpixmap = QPixmap.fromImage(qimg)
+            doc.close()
+            
+            # Show in dialog
+            dialog = QDialog(self)
+            dialog.setWindowTitle("Bill Preview")
+            dialog.resize(600, 800)
+            
+            layout = QVBoxLayout(dialog)
+            layout.setContentsMargins(0, 0, 0, 0)
+            
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setStyleSheet("background-color: #555555;")
+            
+            img_label = QLabel()
+            img_label.setPixmap(qpixmap)
+            img_label.setAlignment(Qt.AlignCenter)
+            img_label.setStyleSheet("background-color: #555555;")
+            
+            scroll.setWidget(img_label)
+            layout.addWidget(scroll)
+            
+            dialog.exec_()
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Preview Error", f"Failed to generate preview.\n{str(e)}")
+        finally:
+            # Cleanup temp file
+            if os.path.exists(temp_pdf):
+                try:
+                    os.remove(temp_pdf)
+                except:
+                    pass
 
     def generate_pdf(self):
         if self.table.rowCount() == 0:
