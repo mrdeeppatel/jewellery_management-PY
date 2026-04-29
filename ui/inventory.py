@@ -35,25 +35,60 @@ class ItemDialog(QDialog):
     def __init__(self, item=None):
         super().__init__()
         self.setWindowTitle("Add Item" if not item else "Edit Item")
-        self.setFixedSize(340, 420)
-        self.layout = QVBoxLayout()
+        self.resize(550, 450)
+        self.setStyleSheet("""
+            QDialog { background-color: #f8f9fa; }
+            QLabel { font-size: 14px; font-weight: bold; color: #495057; }
+            QLineEdit {
+                padding: 10px 12px;
+                font-size: 14px;
+                border: 1px solid #ced4da;
+                border-radius: 6px;
+                background-color: white;
+            }
+            QLineEdit:focus { border: 2px solid #0d6efd; }
+            QPushButton {
+                background-color: #0d6efd;
+                color: white;
+                font-size: 15px;
+                font-weight: bold;
+                padding: 10px 20px;
+                border-radius: 6px;
+                border: none;
+            }
+            QPushButton:hover { background-color: #0b5ed7; }
+        """)
+
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(30, 30, 30, 30)
+        main_layout.setSpacing(25)
+
+        # Title
+        title = QLabel("📦 Add New Item" if not item else "✏️ Edit Item Details")
+        title.setStyleSheet("font-size: 24px; font-weight: bold; color: #212529;")
+        main_layout.addWidget(title)
+
+        # Form Layout (2 columns)
+        grid = QGridLayout()
+        grid.setSpacing(15)
+        grid.setVerticalSpacing(20)
 
         self.code_input = QLineEdit()
-        self.code_input.setPlaceholderText("Item Code (e.g. KD76)")
+        self.code_input.setPlaceholderText("e.g. KD76")
         self.tag_input = QLineEdit()
         self.tag_input.setPlaceholderText("Tag No")
         self.name_input = QLineEdit()
-        self.name_input.setPlaceholderText("Item Name")
+        self.name_input.setPlaceholderText("Item Name (Required)")
         self.design_input = QLineEdit()
-        self.design_input.setPlaceholderText("Design")
+        self.design_input.setPlaceholderText("Design / Style")
         self.gr_wt_input = QLineEdit()
-        self.gr_wt_input.setPlaceholderText("Gross Weight (g)")
+        self.gr_wt_input.setPlaceholderText("0.00")
         self.net_wt_input = QLineEdit()
-        self.net_wt_input.setPlaceholderText("Net Weight (g)")
+        self.net_wt_input.setPlaceholderText("0.00")
         self.touch_input = QLineEdit()
-        self.touch_input.setPlaceholderText("Touch %")
+        self.touch_input.setPlaceholderText("0.00")
         self.mrp_input = QLineEdit()
-        self.mrp_input.setPlaceholderText("MRP")
+        self.mrp_input.setPlaceholderText("0.00")
 
         if item:
             self.code_input.setText(item.item_code or "")
@@ -65,27 +100,50 @@ class ItemDialog(QDialog):
             self.touch_input.setText(str(item.touch) if item.touch else "")
             self.mrp_input.setText(str(item.mrp) if item.mrp else "")
 
-        self.layout.addWidget(QLabel("Item Code"))
-        self.layout.addWidget(self.code_input)
-        self.layout.addWidget(QLabel("Tag No"))
-        self.layout.addWidget(self.tag_input)
-        self.layout.addWidget(QLabel("Item Name"))
-        self.layout.addWidget(self.name_input)
-        self.layout.addWidget(QLabel("Design"))
-        self.layout.addWidget(self.design_input)
-        self.layout.addWidget(QLabel("Gross Weight (g)"))
-        self.layout.addWidget(self.gr_wt_input)
-        self.layout.addWidget(QLabel("Net Weight (g)"))
-        self.layout.addWidget(self.net_wt_input)
-        self.layout.addWidget(QLabel("Touch %"))
-        self.layout.addWidget(self.touch_input)
-        self.layout.addWidget(QLabel("MRP"))
-        self.layout.addWidget(self.mrp_input)
+        # Row 0 & 1: Code and Gross Wt
+        grid.addWidget(QLabel("Item Code"), 0, 0)
+        grid.addWidget(self.code_input, 1, 0)
+        grid.addWidget(QLabel("Gross Weight (g)"), 0, 1)
+        grid.addWidget(self.gr_wt_input, 1, 1)
 
-        self.save_btn = QPushButton("Save")
+        # Row 2 & 3: Tag and Net Wt
+        grid.addWidget(QLabel("Tag No"), 2, 0)
+        grid.addWidget(self.tag_input, 3, 0)
+        grid.addWidget(QLabel("Net Weight (g)"), 2, 1)
+        grid.addWidget(self.net_wt_input, 3, 1)
+
+        # Row 4 & 5: Name and Touch
+        grid.addWidget(QLabel("Item Name <span style='color:red;'>*</span>"), 4, 0)
+        grid.addWidget(self.name_input, 5, 0)
+        grid.addWidget(QLabel("Touch %"), 4, 1)
+        grid.addWidget(self.touch_input, 5, 1)
+
+        # Row 6 & 7: Design and MRP
+        grid.addWidget(QLabel("Design"), 6, 0)
+        grid.addWidget(self.design_input, 7, 0)
+        grid.addWidget(QLabel("MRP (₹)"), 6, 1)
+        grid.addWidget(self.mrp_input, 7, 1)
+
+        main_layout.addLayout(grid)
+
+        # Buttons
+        btn_layout = QHBoxLayout()
+        self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn.setStyleSheet("""
+            QPushButton { background-color: #e9ecef; color: #495057; }
+            QPushButton:hover { background-color: #ced4da; }
+        """)
+        self.cancel_btn.clicked.connect(self.reject)
+        
+        self.save_btn = QPushButton("Save Item")
         self.save_btn.clicked.connect(self.accept)
-        self.layout.addWidget(self.save_btn)
-        self.setLayout(self.layout)
+
+        btn_layout.addStretch()
+        btn_layout.addWidget(self.cancel_btn)
+        btn_layout.addWidget(self.save_btn)
+        
+        main_layout.addStretch()
+        main_layout.addLayout(btn_layout)
 
     def get_data(self):
         return {

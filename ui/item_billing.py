@@ -147,7 +147,7 @@ class ItemBillingPage(QWidget):
 
         # Table Controls
         table_controls_layout = QHBoxLayout()
-        self.btn_generate_pdf = QPushButton("📄 Generate PDF Bill")
+        self.btn_generate_pdf = QPushButton("🖨 Print Bill")
         self.btn_generate_pdf.setStyleSheet("background-color: #2B8A3E; color: white; padding: 6px 14px; font-size: 13px; font-weight: bold; border-radius: 4px;")
         self.btn_remove = QPushButton("🗑 Delete Selected")
         self.btn_remove.setStyleSheet("background-color: #FA5252; color: white; padding: 6px 12px; font-size: 13px; font-weight: bold; border-radius: 4px;")
@@ -396,18 +396,23 @@ class ItemBillingPage(QWidget):
         discount = self.inp_discount.text().strip() or "0.00"
         final_amount = self.lbl_final_amount.text()
 
-        default_name = f"ItemBill_{voucher}_{date_str}.pdf"
-        file_path, _ = QFileDialog.getSaveFileName(
-            self, "Save Bill PDF", default_name, "PDF Files (*.pdf)"
-        )
-        if not file_path:
-            return
+        import tempfile
+        import webbrowser
+        
+        default_name = f"{voucher}_{date_str}_{party}.pdf"
+        file_path = os.path.join(tempfile.gettempdir(), default_name)
 
         try:
             self._build_pdf(file_path, voucher, date_str, party,
                             grand_total, discount, final_amount)
-            QMessageBox.information(self, "Success", f"Bill saved successfully!\n{file_path}")
-            os.startfile(file_path)
+            
+            # Reset UI after generation
+            self.table.setRowCount(0)
+            self.calculate_totals()
+            self.party_input.clear()
+
+            # Open PDF in browser for printing
+            webbrowser.open(f"file:///{os.path.realpath(file_path).replace(chr(92), '/')}")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to generate PDF.\n{str(e)}")
 

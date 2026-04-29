@@ -89,6 +89,7 @@ class LiveBillingPage(QWidget):
         self.init_ui()
         self.setup_connections()
         self.setup_keyboard_navigation()
+        self._load_next_voucher()  # auto-set voucher on startup
 
     def init_ui(self):
         self.setWindowTitle("Live Billing Panel")
@@ -208,12 +209,28 @@ class LiveBillingPage(QWidget):
         top_header_layout.setSpacing(15)
         
         self.voucher_input = QLineEdit()
-        self.voucher_input.setPlaceholderText("Voucher ID")
+        self.voucher_input.setPlaceholderText("Auto")
+        self.voucher_input.setReadOnly(True)
+        self.voucher_input.setStyleSheet(
+            "background-color: #E9ECEF; color: #495057; font-weight: bold; "
+            "border: 1px solid #CED4DA; border-radius: 6px; padding: 8px 12px;"
+        )
         
+        _ro_style = (
+            "background-color: #E9ECEF; color: #495057; font-weight: bold; "
+            "border: 1px solid #CED4DA; border-radius: 6px; padding: 8px 12px;"
+        )
+
         self.date_input = QDateEdit()
         self.date_input.setDate(QDate.currentDate())
-        self.date_input.setCalendarPopup(True)
-        
+        self.date_input.setCalendarPopup(False)
+        self.date_input.setDisplayFormat("dd-MM-yyyy")
+        self.date_input.setReadOnly(True)
+        self.date_input.setButtonSymbols(QDateEdit.NoButtons)
+        self.date_input.setStyleSheet(_ro_style)
+
+        self.time_input = None  # not shown on screen; time is auto-stamped on PDF
+
         self.party_input = QLineEdit()
         self.party_input.setPlaceholderText("Party Name")
         
@@ -270,7 +287,7 @@ class LiveBillingPage(QWidget):
             QPushButton:hover { background-color: #339AF0; }
             QPushButton:focus { background-color: #339AF0; border: 2px solid #228BE6; outline: none; }
         """)
-        self.btn_generate_pdf = QPushButton("📄 Generate PDF Bill")
+        self.btn_generate_pdf = QPushButton("🖨 Print Bill")
         self.btn_generate_pdf.setStyleSheet("""
             QPushButton { background-color: #2B8A3E; color: white; padding: 6px 14px; font-size: 13px; font-weight: bold; border-radius: 4px; border: 2px solid transparent; }
             QPushButton:hover { background-color: #2F9E44; }
@@ -756,9 +773,7 @@ class LiveBillingPage(QWidget):
 
         # Static widgets that are always in the tab order
         self._static_tab_widgets = [
-            # ── Header ──
-            self.voucher_input,
-            self.date_input,
+            # ── Header ──  (voucher/date/time are read-only — skipped)
             self.party_input,
             # ── Global fields ──
             self.global_touch_input,
@@ -794,9 +809,7 @@ class LiveBillingPage(QWidget):
     def _get_tab_order(self):
         """Build the full tab order dynamically, including right-panel settlement entries."""
         order = [
-            # ── Header ──
-            self.voucher_input,
-            self.date_input,
+            # ── Header ──  (voucher/date/time are read-only — skipped)
             self.party_input,
             # ── Global fields ──
             self.global_touch_input,
@@ -825,6 +838,26 @@ class LiveBillingPage(QWidget):
             order.append(entry["inp_purity"])
 
         return order
+
+    def _load_next_voucher(self):
+        """Query the DB for the highest numeric voucher and set voucher_input to max+1."""
+        try:
+            db = next(get_db())
+            from models.database import Bill
+            vouchers = db.query(Bill.voucher).all()
+            db.close()
+            max_num = 0
+            for (v,) in vouchers:
+                try:
+                    num = int(v)
+                    if num > max_num:
+                        max_num = num
+                except (TypeError, ValueError):
+                    pass
+            next_voucher = max_num + 1
+        except Exception:
+            next_voucher = 1
+        self.voucher_input.setText(str(next_voucher))
 
     def _focus_item_code(self):
         """Set focus to the Item Code field for the next entry."""
@@ -1166,25 +1199,23 @@ class LiveBillingPage(QWidget):
         rate_cut = self.inp_rate_cut.text().strip() or "0.00"
         amount = self.lbl_amount.text()
 
-        # Ask user where to save
-        default_name = f"Bill_{voucher}_{date_str}.pdf"
-        file_path, _ = QFileDialog.getSaveFileName(
-            self, "Save Bill PDF", default_name, "PDF Files (*.pdf)"
-        )
-        if not file_path:
-            return
+        # Save to temp directory automatically for printing
+        import tempfile, webbrowser
+        default_name = f"{voucher}_{date_str}_{party}.pdf"
+        file_path = os.path.join(tempfile.gettempdir(), default_name)
 
         try:
             self._save_bill_to_db(voucher, party, total_fine, fine_9950, rate_cut, amount)
             self._build_pdf(file_path, voucher, date_str, party,
                             total_fine, fine_9950, rate_cut, amount)
-            QMessageBox.information(self, "Success", f"Bill saved to DB and PDF generated successfully!\n{file_path}")
-            os.startfile(file_path)  # Open the PDF on Windows
             
-            # Optionally reset UI after bill is completed
+            # Open the PDF in the default web browser (which has a print dialog)
+            webbrowser.open(f"file:///{os.path.realpath(file_path).replace(chr(92), '/')}")
+            
+            # Reset UI and auto-increment voucher for next bill
             self.table.setRowCount(0)
             self.calculate_totals()
-            self.voucher_input.clear()
+            self._load_next_voucher()   # ← next incremental voucher
             self.party_input.clear()
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to save/generate bill.\n{str(e)}")
@@ -1266,11 +1297,13 @@ class LiveBillingPage(QWidget):
         black = colors.black
 
         # ── Top Header: Time / Date / Slip ──
+        # Always use current datetime at generation time
         now = datetime.now()
-        time_str = now.strftime('%I:%M:%S %p')
+        time_str  = now.strftime('%I:%M %p')
+        date_str_pdf = now.strftime('%d-%m-%Y')
         header_data = [[
             f"Time: {time_str}",
-            f"Date: {date_str}",
+            f"Date: {date_str_pdf}",
             f"Slip: {voucher}"
         ]]
         ht = Table(header_data, colWidths=[usable_w*0.35, usable_w*0.35, usable_w*0.30])
@@ -1311,58 +1344,115 @@ class LiveBillingPage(QWidget):
             "\u0ab0\u0ac2\u0aaa\u0abf\u0aaf\u0abe"  # રૂપિયા
         ]
 
-        # Collect data from table
+        # ── Collect & group rows by (vigat, touch) ──────────────────────────
         rate_val = self.get_float(rate_cut)
-        rate_per_gram = rate_val / 10.0
 
-        table_data = [headers]
-        total_gross = 0.0
-        total_less = 0.0
-        total_net = 0.0
-        total_fine_val = 0.0
-        total_amount = 0.0
+        # Build an ordered list of groups: key=(vigat_label, touch_val)
+        from collections import OrderedDict
+        groups = OrderedDict()
 
         for row in range(self.table.rowCount()):
-            tag = self.table.item(row, 0).text() if self.table.item(row, 0) else ""
-            name = self.table.item(row, 1).text() if self.table.item(row, 1) else ""
+            tag    = self.table.item(row, 0).text() if self.table.item(row, 0) else ""
+            name   = self.table.item(row, 1).text() if self.table.item(row, 1) else ""
             net_wt = self.get_float(self.table.item(row, 2).text() if self.table.item(row, 2) else "0")
-            touch = self.get_float(self.table.item(row, 3).text() if self.table.item(row, 3) else "0")
-            wastage = self.get_float(self.table.item(row, 4).text() if self.table.item(row, 4) else "0")
-            fine = self.get_float(self.table.item(row, 5).text() if self.table.item(row, 5) else "0")
+            touch  = self.get_float(self.table.item(row, 3).text() if self.table.item(row, 3) else "0")
+            wastage= self.get_float(self.table.item(row, 4).text() if self.table.item(row, 4) else "0")
+            fine   = self.get_float(self.table.item(row, 5).text() if self.table.item(row, 5) else "0")
 
-            detail = f"{tag}" if tag else name
+            vigat = tag if tag else name
+            key   = (vigat, touch)
+
             gross = net_wt
-            less = 0.0
-            net = gross - less
-            row_amount = fine * rate_per_gram
+            less  = 0.0
 
-            total_gross += gross
-            total_less += less
-            total_net += net
-            total_fine_val += fine
-            total_amount += row_amount
+            if key not in groups:
+                groups[key] = {"vigat": vigat, "touch": touch,
+                               "gross": 0.0, "less": 0.0,
+                               "weight": 0.0, "fine": 0.0}
+            groups[key]["gross"]  += gross
+            groups[key]["less"]   += less
+            groups[key]["weight"] += gross - less   # net weight
+            groups[key]["fine"]   += fine
+
+        # ── Build PDF table rows from groups ─────────────────────────────────
+        table_data = [headers]
+        total_gross     = 0.0
+        total_less      = 0.0
+        total_weight    = 0.0
+        total_fine_val  = 0.0
+
+        for g in groups.values():
+            total_gross    += g["gross"]
+            total_less     += g["less"]
+            total_weight   += g["weight"]
+            total_fine_val += g["fine"]
 
             table_data.append([
-                detail,
-                f"{gross:.3f}",
-                f"{less:.3f}",
-                f"{net:.3f}",
-                f"{touch:.2f}",
-                f"{fine:.3f}",
-                f"{rate_val:.0f}" if rate_val > 0 else "",
-                f"{row_amount:.2f}" if rate_val > 0 else ""
+                g["vigat"],
+                f"{g['gross']:.3f}",
+                f"{g['less']:.3f}",
+                f"{g['weight']:.3f}",
+                f"{g['touch']:.2f}",
+                f"{g['fine']:.3f}",
+                "",    # rate  — empty for item rows
+                "",    # amount — empty for item rows
             ])
 
-        # Total row
+        # ── Totals row (sum of all grouped values) ────────────────────────────
         table_data.append([
             "Total",
             f"{total_gross:.3f}",
             f"{total_less:.3f}",
-            f"{total_net:.3f}",
+            f"{total_weight:.3f}",
             "",
             f"{total_fine_val:.3f}",
             "",
-            f"{total_amount:.2f}" if rate_val > 0 else ""
+            "",
+        ])
+
+        # ── Rate / Ratt row: single final-amount calculation ─────────────────
+        #   Step 1 – raw value
+        import math as _math
+        if rate_val > 0:
+            _raw = (total_fine_val * rate_val) / 10.0
+            # Step 2 – ceiling rounding:
+            #   integer  → keep as-is
+            #   decimal  → ceil to 2 dp  (e.g. 32736.661 → 32736.67)
+            if _raw % 1 == 0:
+                final_amount = _raw
+            else:
+                final_amount = _math.ceil(_raw * 100) / 100
+        else:
+            final_amount = 0.0
+
+        # Format for display: integer → no decimals, decimal → exactly 2 dp
+        def _fmt_amount(v):
+            if v % 1 == 0:
+                return str(int(v))
+            return f"{v:.2f}"
+
+        ratt_row = [
+            "Ratt",
+            "",
+            "",
+            "",
+            "",
+            f"{total_fine_val:.3f}",
+            f"{rate_val:.0f}" if rate_val > 0 else "",
+            _fmt_amount(final_amount) if rate_val > 0 else "",
+        ]
+        table_data.append(ratt_row)
+
+        # ── Final Total row ──────────────────────────────────────────────────
+        table_data.append([
+            "Total",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            _fmt_amount(final_amount) if rate_val > 0 else "",
         ])
 
         cw = [usable_w*0.14, usable_w*0.12, usable_w*0.10, usable_w*0.12,
@@ -1370,6 +1460,11 @@ class LiveBillingPage(QWidget):
         items_table = Table(table_data, colWidths=cw, repeatRows=1)
 
         num_rows = len(table_data)
+        # row indices: header=0, items=1..n, totals=num_rows-3, ratt=num_rows-2, final_total=num_rows-1
+        totals_idx     = num_rows - 3
+        ratt_idx       = num_rows - 2
+        final_tot_idx  = num_rows - 1
+
         items_table.setStyle(TableStyle([
             ('FONTNAME', (0,0), (-1,0), guj_bold),
             ('FONTSIZE', (0,0), (-1,0), 8),
@@ -1383,20 +1478,27 @@ class LiveBillingPage(QWidget):
             ('BOTTOMPADDING', (0,0), (-1,-1), 3),
             ('LEFTPADDING', (0,0), (-1,-1), 3),
             ('RIGHTPADDING', (0,0), (-1,-1), 3),
-            # Bold total row
-            ('FONTNAME', (0, num_rows-1), (-1, num_rows-1), guj_bold),
-            ('LINEABOVE', (0, num_rows-1), (-1, num_rows-1), 1.2, black),
+            # Bold + separator for Totals row
+            ('FONTNAME',  (0, totals_idx), (-1, totals_idx), guj_bold),
+            ('LINEABOVE', (0, totals_idx), (-1, totals_idx), 1.2, black),
+            # Bold + separator for Ratt row
+            ('FONTNAME',  (0, ratt_idx), (-1, ratt_idx), guj_bold),
+            ('LINEABOVE', (0, ratt_idx), (-1, ratt_idx), 0.8, black),
+            # Bold + separator for Final Total row
+            ('FONTNAME',  (0, final_tot_idx), (-1, final_tot_idx), guj_bold),
+            ('LINEABOVE', (0, final_tot_idx), (-1, final_tot_idx), 1.2, black),
         ]))
         elements.append(items_table)
         elements.append(Spacer(1, 4*mm))
 
         # ── Bottom Summary Section ──
-        remaining_text = self.lbl_remaining.text().replace("Remaining: ", "").strip()
-        qty = self.table.rowCount()
+        # qty = number of grouped rows (not raw input rows)
+        qty = len(groups)
 
         bottom_data = [
-            [f"P. Wt: {total_gross:.3f} g", f"Qty: {qty}",
-             "\u0aac\u0abe\u0a95\u0ac0: " + remaining_text]  # બાકી
+            [f"P. Wt: {total_gross:.3f} g",
+             f"Qty: {qty}",
+             f"Fine: {total_fine_val:.3f} g"]
         ]
         bt = Table(bottom_data, colWidths=[usable_w*0.35, usable_w*0.25, usable_w*0.40])
         bt.setStyle(TableStyle([
@@ -1411,9 +1513,9 @@ class LiveBillingPage(QWidget):
         ]))
         elements.append(bt)
 
-        # Final Price row
-        final_price_text = self.lbl_amount.text()
-        fp_data = [[f"Final Price: {final_price_text}"]]
+        # Final Price row — use locally computed final_amount (no rounding)
+        final_price_display = f"{final_amount}" if rate_val > 0 else "0"
+        fp_data = [[f"Final Price: {final_price_display}"]]
         fp = Table(fp_data, colWidths=[usable_w])
         fp.setStyle(TableStyle([
             ('FONTNAME', (0,0), (-1,-1), guj_bold),

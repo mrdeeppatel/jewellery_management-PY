@@ -195,7 +195,7 @@ class AllBills(QWidget):
             btn_layout.setContentsMargins(0,0,0,0)
             btn_layout.setSpacing(10)
             
-            btn_pdf = QPushButton("📄 PDF")
+            btn_pdf = QPushButton("🖨 Print")
             btn_pdf.setStyleSheet("background-color: #2B8A3E; color: white; border-radius: 4px; padding: 4px 8px; font-weight: bold;")
             btn_pdf.setCursor(Qt.PointingHandCursor)
             btn_pdf.clicked.connect(lambda checked, b=bill: self.generate_pdf_for_bill(b))
@@ -276,97 +276,256 @@ class AllBills(QWidget):
 
     def generate_pdf_for_bill(self, bill):
         import os
-        from reportlab.lib.pagesizes import A4
+        import tempfile
+        import webbrowser
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.ttfonts import TTFont
+        from reportlab.lib.pagesizes import A5
         from reportlab.lib import colors
         from reportlab.lib.units import mm
         from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
-        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-        from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
         from datetime import datetime
+        import math as _math
+        from collections import OrderedDict
 
         voucher = bill["voucher"]
         date_str = bill["date"].split(" ")[0]
-        default_name = f"Bill_{voucher}_{date_str}.pdf"
-        file_path, _ = QFileDialog.getSaveFileName(self, "Save Bill PDF", default_name, "PDF Files (*.pdf)")
         
-        if not file_path:
-            return
+        # Save to temp directory automatically for printing
+        default_name = f"{voucher}_{date_str}_{bill['customer_name']}.pdf"
+        file_path = os.path.join(tempfile.gettempdir(), default_name)
             
         try:
-            doc = SimpleDocTemplate(file_path, pagesize=A4, topMargin=15*mm, bottomMargin=15*mm, leftMargin=15*mm, rightMargin=15*mm)
+            # ── Register Gujarati-capable font ──
+            font_path = r'C:\Windows\Fonts\shruti.ttf'
+            font_bold_path = r'C:\Windows\Fonts\shrutib.ttf'
+            if os.path.exists(font_path):
+                pdfmetrics.registerFont(TTFont('Shruti', font_path))
+            if os.path.exists(font_bold_path):
+                pdfmetrics.registerFont(TTFont('ShrutiBold', font_bold_path))
+
+            guj_font = 'Shruti' if os.path.exists(font_path) else 'Helvetica'
+            guj_bold = 'ShrutiBold' if os.path.exists(font_bold_path) else 'Helvetica-Bold'
+
+            page_w, page_h = A5  # 148 x 210 mm
+
+            doc = SimpleDocTemplate(
+                file_path, pagesize=(page_w, page_h),
+                topMargin=8*mm, bottomMargin=8*mm,
+                leftMargin=6*mm, rightMargin=6*mm
+            )
+            usable_w = page_w - 12*mm
             elements = []
-            styles = getSampleStyleSheet()
             black = colors.black
 
-            title_style = ParagraphStyle('BillTitle', parent=styles['Title'], fontSize=18, leading=22, alignment=TA_CENTER, textColor=black, fontName='Helvetica-Bold', spaceAfter=2)
-            elements.append(Paragraph("JEWELLERY BILL", title_style))
-            elements.append(Spacer(1, 6*mm))
-
-            info_data = [
-                ["Voucher", voucher, "Date", date_str],
-                ["Party", bill["customer_name"], "Generated", datetime.now().strftime('%d-%m-%Y %I:%M %p')],
-            ]
-            info_table = Table(info_data, colWidths=[doc.width*0.15, doc.width*0.35, doc.width*0.15, doc.width*0.35])
-            info_table.setStyle(TableStyle([
-                ('FONTNAME', (0,0), (0,-1), 'Helvetica-Bold'), ('FONTNAME', (2,0), (2,-1), 'Helvetica-Bold'),
-                ('FONTSIZE', (0,0), (-1,-1), 10), ('TEXTCOLOR', (0,0), (-1,-1), black),
-                ('GRID', (0,0), (-1,-1), 0.75, black), ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-                ('TOPPADDING', (0,0), (-1,-1), 6), ('BOTTOMPADDING', (0,0), (-1,-1), 6), ('LEFTPADDING', (0,0), (-1,-1), 6),
+            # ── Top Header: Time / Date / Slip ──
+            now = datetime.now()
+            time_str  = now.strftime('%I:%M %p')
+            date_str_pdf = now.strftime('%d-%m-%Y')
+            header_data = [[
+                f"Time: {time_str}",
+                f"Date: {date_str_pdf}",
+                f"Slip: {voucher}"
+            ]]
+            ht = Table(header_data, colWidths=[usable_w*0.35, usable_w*0.35, usable_w*0.30])
+            ht.setStyle(TableStyle([
+                ('FONTNAME', (0,0), (-1,-1), guj_bold),
+                ('FONTSIZE', (0,0), (-1,-1), 8),
+                ('TEXTCOLOR', (0,0), (-1,-1), black),
+                ('ALIGN', (0,0), (0,0), 'LEFT'),
+                ('ALIGN', (1,0), (1,0), 'CENTER'),
+                ('ALIGN', (2,0), (2,0), 'RIGHT'),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 4),
             ]))
-            elements.append(info_table)
-            elements.append(Spacer(1, 8*mm))
+            elements.append(ht)
 
-            header_row = ["#", "Tag / Design", "Item Name", "Net Wt (g)", "Touch %", "Wastage %", "Fine (g)"]
-            table_data = [header_row]
-            total_net_wt = 0.0
+            # Party name
+            party = bill["customer_name"]
+            if party and party != "Walk-in Customer":
+                p_data = [[f"Party: {party}"]]
+                pt = Table(p_data, colWidths=[usable_w])
+                pt.setStyle(TableStyle([
+                    ('FONTNAME', (0,0), (-1,-1), guj_bold),
+                    ('FONTSIZE', (0,0), (-1,-1), 9),
+                    ('TEXTCOLOR', (0,0), (-1,-1), black),
+                    ('BOTTOMPADDING', (0,0), (-1,-1), 2),
+                ]))
+                elements.append(pt)
 
-            for idx, item in enumerate(bill["items"]):
-                tag = item.get("tag", "")
-                name = item.get("name", "")
-                net_wt = item.get("net_wt", 0)
-                touch = item.get("touch", 0)
-                wastage = item.get("wastage", 0)
-                fine = item.get("fine", 0)
-                total_net_wt += float(net_wt)
-                table_data.append([str(idx+1), tag, name, f"{net_wt:.3f}", f"{touch:.2f}", f"{wastage:.2f}", f"{fine:.3f}"])
+            elements.append(Spacer(1, 3*mm))
 
-            table_data.append(["", "", "TOTAL", f"{total_net_wt:.3f}", "", "", f"{bill['total_fine']:.3f}"])
-            col_widths = [25, 70, 90, 60, 55, 60, 60]
-            items_table = Table(table_data, colWidths=col_widths, repeatRows=1)
+            # ── Gujarati Header Row ──
+            headers = [
+                "\u0ab5\u0abf\u0a97\u0aa4",       # વિગત
+                "\u0a97\u0acd\u0ab0\u0acb\u0ab8",  # ગ્રોસ
+                "\u0ab2\u0ac7\u0ab8",               # લેસ
+                "\u0ab5\u0a9c\u0aa8",               # વજન
+                "\u0a9f\u0a9a",                     # ટચ
+                "\u0aab\u0abe\u0a88\u0aa8",         # ફાઈન
+                "\u0aad\u0abe\u0ab5",               # ભાવ
+                "\u0ab0\u0ac2\u0aaa\u0abf\u0aaf\u0abe"  # રૂપિયા
+            ]
+
+            # ── Collect & group rows by (vigat, touch) ──────────────────────────
+            rate_val = float(bill.get("rate_cut", 0.0) or 0.0)
+            groups = OrderedDict()
+
+            for item in bill["items"]:
+                tag = item.get("tag", "") or ""
+                name = item.get("name", "") or ""
+                net_wt = float(item.get("net_wt", 0.0) or 0.0)
+                touch = float(item.get("touch", 0.0) or 0.0)
+                wastage = float(item.get("wastage", 0.0) or 0.0)
+                fine = float(item.get("fine", 0.0) or 0.0)
+
+                vigat = tag if tag else name
+                key   = (vigat, touch)
+
+                gross = net_wt
+                less  = 0.0
+
+                if key not in groups:
+                    groups[key] = {"vigat": vigat, "touch": touch,
+                                   "gross": 0.0, "less": 0.0,
+                                   "weight": 0.0, "fine": 0.0}
+                groups[key]["gross"]  += gross
+                groups[key]["less"]   += less
+                groups[key]["weight"] += gross - less   # net weight
+                groups[key]["fine"]   += fine
+
+            # ── Build PDF table rows from groups ─────────────────────────────────
+            table_data = [headers]
+            total_gross     = 0.0
+            total_less      = 0.0
+            total_weight    = 0.0
+            total_fine_val  = 0.0
+
+            for g in groups.values():
+                total_gross    += g["gross"]
+                total_less     += g["less"]
+                total_weight   += g["weight"]
+                total_fine_val += g["fine"]
+
+                table_data.append([
+                    g["vigat"],
+                    f"{g['gross']:.3f}",
+                    f"{g['less']:.3f}",
+                    f"{g['weight']:.3f}",
+                    f"{g['touch']:.2f}",
+                    f"{g['fine']:.3f}",
+                    "",    # rate
+                    "",    # amount
+                ])
+
+            # ── Totals row ────────────────────────────
+            table_data.append([
+                "Total",
+                f"{total_gross:.3f}",
+                f"{total_less:.3f}",
+                f"{total_weight:.3f}",
+                "",
+                f"{total_fine_val:.3f}",
+                "",
+                "",
+            ])
+
+            # ── Rate / Ratt row ─────────────────
+            if rate_val > 0:
+                _raw = (total_fine_val * rate_val) / 10.0
+                if _raw % 1 == 0:
+                    final_amount = _raw
+                else:
+                    final_amount = _math.ceil(_raw * 100) / 100
+            else:
+                final_amount = 0.0
+
+            def _fmt_amount(v):
+                if v % 1 == 0:
+                    return str(int(v))
+                return f"{v:.2f}"
+
+            ratt_row = [
+                "Ratt",
+                "",
+                "",
+                "",
+                "",
+                f"{total_fine_val:.3f}",
+                f"{rate_val:.0f}" if rate_val > 0 else "",
+                _fmt_amount(final_amount) if rate_val > 0 else "",
+            ]
+            table_data.append(ratt_row)
+
+            # ── Final Total row ──────────────────────────────────────────────────
+            table_data.append([
+                "Total",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                _fmt_amount(final_amount) if rate_val > 0 else "",
+            ])
+
+            cw = [usable_w*0.14, usable_w*0.12, usable_w*0.10, usable_w*0.12,
+                  usable_w*0.09, usable_w*0.13, usable_w*0.12, usable_w*0.18]
+            items_table = Table(table_data, colWidths=cw, repeatRows=1)
+
+            num_rows = len(table_data)
+            totals_idx     = num_rows - 3
+            ratt_idx       = num_rows - 2
+            final_tot_idx  = num_rows - 1
+
             items_table.setStyle(TableStyle([
-                ('TEXTCOLOR', (0,0), (-1,-1), black), ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0,0), (-1,0), 10), ('TOPPADDING', (0,0), (-1,0), 8), ('BOTTOMPADDING', (0,0), (-1,0), 8),
-                ('FONTSIZE', (0,1), (-1,-1), 9), ('TOPPADDING', (0,1), (-1,-1), 5), ('BOTTOMPADDING', (0,1), (-1,-1), 5),
-                ('ALIGN', (0,0), (0,-1), 'CENTER'), ('ALIGN', (3,0), (-1,-1), 'RIGHT'),
-                ('GRID', (0,0), (-1,-1), 0.75, black), ('FONTNAME', (0,-1), (-1,-1), 'Helvetica-Bold'),
+                ('FONTNAME', (0,0), (-1,0), guj_bold),
+                ('FONTSIZE', (0,0), (-1,0), 8),
+                ('FONTNAME', (0,1), (-1,-1), guj_font),
+                ('FONTSIZE', (0,1), (-1,-1), 7.5),
+                ('TEXTCOLOR', (0,0), (-1,-1), black),
+                ('ALIGN', (1,0), (-1,-1), 'RIGHT'),
+                ('ALIGN', (0,0), (0,-1), 'LEFT'),
+                ('GRID', (0,0), (-1,-1), 0.6, black),
+                ('TOPPADDING', (0,0), (-1,-1), 3),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 3),
+                ('LEFTPADDING', (0,0), (-1,-1), 3),
+                ('RIGHTPADDING', (0,0), (-1,-1), 3),
+
+                # Totals row styling
+                ('LINEABOVE', (0, totals_idx), (-1, totals_idx), 1, black),
+                ('FONTNAME', (0, totals_idx), (-1, totals_idx), guj_bold),
+                ('FONTSIZE', (0, totals_idx), (-1, totals_idx), 8),
+
+                # Ratt row styling
+                ('LINEABOVE', (0, ratt_idx), (-1, ratt_idx), 1, black),
+                ('FONTNAME', (0, ratt_idx), (-1, ratt_idx), guj_bold),
+                ('FONTSIZE', (0, ratt_idx), (-1, ratt_idx), 8),
+
+                # Final Total row styling
+                ('LINEABOVE', (0, final_tot_idx), (-1, final_tot_idx), 1, black),
+                ('FONTNAME', (0, final_tot_idx), (-1, final_tot_idx), guj_bold),
+                ('FONTSIZE', (0, final_tot_idx), (-1, final_tot_idx), 9),
             ]))
             elements.append(items_table)
-            elements.append(Spacer(1, 8*mm))
-
-            summary_data = [
-                ["Bill Summary", ""],
-                ["Total Fine", f"{bill['total_fine']:.3f} g"],
-                ["99.50 Fine", f"{bill['fine_9950']:.3f} g"],
-                ["Rate Cut (per 10 gm)", f"Rs. {bill['rate_cut']:.2f}"],
-                ["Total Amount", f"₹ {bill['total_amount']:,.2f}"],
-            ]
-            summary_table = Table(summary_data, colWidths=[doc.width*0.5, doc.width*0.5])
-            summary_table.setStyle(TableStyle([
-                ('TEXTCOLOR', (0,0), (-1,-1), black), ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0,0), (-1,0), 11), ('SPAN', (0,0), (-1,0)), ('ALIGN', (0,0), (-1,0), 'CENTER'),
-                ('FONTNAME', (0,1), (0,-1), 'Helvetica-Bold'), ('FONTSIZE', (0,1), (-1,-1), 10),
-                ('ALIGN', (1,1), (1,-1), 'RIGHT'), ('GRID', (0,0), (-1,-1), 0.75, black),
-                ('TOPPADDING', (0,0), (-1,-1), 6), ('BOTTOMPADDING', (0,0), (-1,-1), 6), ('LEFTPADDING', (0,0), (-1,-1), 6),
-                ('FONTNAME', (0,-1), (-1,-1), 'Helvetica-Bold'), ('FONTSIZE', (0,-1), (-1,-1), 11),
-            ]))
-            elements.append(summary_table)
-            elements.append(Spacer(1, 10*mm))
             
-            ts_style = ParagraphStyle('Timestamp', parent=styles['Normal'], fontSize=8, alignment=TA_CENTER, textColor=black, spaceBefore=10)
-            elements.append(Paragraph(f"Generated on: {datetime.now().strftime('%d-%m-%Y %I:%M:%S %p')}", ts_style))
+            elements.append(Spacer(1, 4*mm))
+
+            # Footer
+            footer_data = [
+                [f"Qty: {len(groups)}", f"Fine: {total_fine_val:.3f}"]
+            ]
+            footer_table = Table(footer_data, colWidths=[usable_w*0.5, usable_w*0.5])
+            footer_table.setStyle(TableStyle([
+                ('FONTNAME', (0,0), (-1,-1), guj_bold),
+                ('FONTSIZE', (0,0), (-1,-1), 8),
+                ('TEXTCOLOR', (0,0), (-1,-1), black),
+                ('ALIGN', (0,0), (0,0), 'LEFT'),
+                ('ALIGN', (1,0), (1,0), 'RIGHT'),
+            ]))
+            elements.append(footer_table)
 
             doc.build(elements)
-            QMessageBox.information(self, "Success", f"PDF Generated successfully!\n{file_path}")
-            os.startfile(file_path)
+            webbrowser.open(f"file:///{os.path.realpath(file_path).replace(chr(92), '/')}")
+            
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to generate PDF.\n{str(e)}")
